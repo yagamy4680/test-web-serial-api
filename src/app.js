@@ -1,4 +1,5 @@
 import { COBSDecoder } from './cobs-decoder.js';
+import { unpack } from 'msgpackr';
 
 // Check if Web Serial API is supported
 if (!("serial" in navigator)) {
@@ -38,7 +39,7 @@ class SerialCOBSApp {
             
             // Open the serial port with appropriate settings
             await this.port.open({
-                baudRate: 9600,
+                baudRate: 115200,
                 dataBits: 8,
                 stopBits: 1,
                 parity: "none",
@@ -161,10 +162,8 @@ class SerialCOBSApp {
         }
     }
 
-    async decodeMessagePack(data) {
+    decodeMessagePack(data) {
         try {
-            // Dynamic import of msgpackr for browser compatibility
-            const { unpack } = await import('https://cdn.skypack.dev/msgpackr');
             const decoded = unpack(data);
             this.displayDecodedData(decoded);
         } catch (error) {

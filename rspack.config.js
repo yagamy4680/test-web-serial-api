@@ -10,5 +10,5 @@ module.exports = {
   resolve: {
     extensions: ['.js']
   },
-  devtool: process.env.NODE_ENV === 'production' ? false : 'source-map'
+  devtool: 'source-map'
 };
