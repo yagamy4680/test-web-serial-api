@@ -2,6 +2,8 @@ import { createStreamEncoder, createStreamDecoder } from 'ucobs';
 import { pack, unpack } from 'msgpackr';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import crc8 from 'crc/crc8';
+const sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 // Check if Web Serial API is supported
 if (!("serial" in navigator)) {
@@ -46,12 +48,6 @@ class SerialCOBSTerminal {
             (error) => this.logError(`uCOBS decode error: ${error.message}`)
         );
         
-        // uCOBS stream encoder for outgoing data  
-        this.streamEncoder = createStreamEncoder(
-            (chunk, isEnd) => this.sendEncodedChunk(chunk, isEnd),
-            (error) => this.logError(`uCOBS encode error: ${error.message}`)
-        );
-        
         this.initializeUI();
     }
 
@@ -77,7 +73,7 @@ class SerialCOBSTerminal {
         document.getElementById('jsonInput').addEventListener('input', () => this.updateSendButtons());
         
         this.updateConnectionStatus('Disconnected', 'secondary');
-        this.terminal.writeln('\\x1b[32mSerial Terminal Ready\\x1b[0m');
+        this.terminal.writeln('\x1b[32mSerial Terminal Ready\x1b[0m');
         this.terminal.writeln('Connect to a serial port to begin communication.');
         this.terminal.writeln('');
     }
@@ -99,7 +95,7 @@ class SerialCOBSTerminal {
             });
 
             this.updateConnectionStatus('Connected', 'success');
-            this.terminal.writeln(`\\x1b[32m[CONNECTED]\\x1b[0m Serial port opened at ${baudRate} baud`);
+            this.terminal.writeln(`\x1b[32m[CONNECTED]\x1b[0m Serial port opened at ${baudRate} baud`);
             this.terminal.writeln('');
             
             document.getElementById('connectBtn').disabled = true;
@@ -111,6 +107,8 @@ class SerialCOBSTerminal {
 
             // Start reading data
             this.startReading();
+
+            await this.sendHexString('05 11 91 10 84 00'); // Example initial command
 
         } catch (error) {
             this.logError('Failed to connect: ' + error.message);
@@ -139,7 +137,7 @@ class SerialCOBSTerminal {
             }
 
             this.updateConnectionStatus('Disconnected', 'secondary');
-            this.terminal.writeln(`\\x1b[31m[DISCONNECTED]\\x1b[0m Serial port closed`);
+            this.terminal.writeln(`\x1b[31m[DISCONNECTED]\x1b[0m Serial port closed`);
             this.terminal.writeln('');
             
             document.getElementById('connectBtn').disabled = false;
@@ -187,7 +185,7 @@ class SerialCOBSTerminal {
             byte.toString(16).padStart(2, '0').toUpperCase()
         ).join(' ');
         
-        this.terminal.writeln(`\\x1b[34m[RX]\\x1b[0m ${hexString}`);
+        this.terminal.writeln(`\x1b[34m[RX]\x1b[0m ${hexString}`);
         
         // Feed data to uCOBS stream decoder
         this.streamDecoder(data);
@@ -202,23 +200,41 @@ class SerialCOBSTerminal {
             const hexString = Array.from(chunk).map(byte => 
                 byte.toString(16).padStart(2, '0').toUpperCase()
             ).join(' ');
-            this.terminal.writeln(`\\x1b[36m[DECODED]\\x1b[0m ${hexString}`);
+            this.terminal.writeln(`\x1b[36m[DECODED]\x1b[0m ${hexString}`);
+
+            if (chunk.length < 3) {
+                return this.terminal.writeln(`\x1b[33m[RAW]\x1b[0m Packet too short to process: ${hexString}`);
+            }
+
+            let packet_id = chunk[0];
+            let checksum = chunk[chunk.length - 1];
+            let payload = chunk.slice(1, chunk.length - 1);
+            console.log('Processing packet ID:', packet_id, 'Checksum:', checksum, 'Payload:', payload);
+            if (checksum != crc8(payload)) {
+                return this.terminal.writeln(`\x1b[31m[ERROR]\x1b[0m Checksum mismatch for packet ID ${packet_id}: expected ${crc8(payload).toString(16).toUpperCase().padStart(2,'0')}, got ${checksum.toString(16).toUpperCase().padStart(2,'0')}`);
+            }
             
             // Try to decode as MessagePack
-            this.decodeMessagePack(chunk);
+            this.decodeMessagePack(payload);
         }
     }
 
     decodeMessagePack(data) {
         try {
             const decoded = unpack(data);
-            const jsonString = JSON.stringify(decoded, null, 2);
-            this.terminal.writeln(`\\x1b[32m[JSON]\\x1b[0m ${jsonString}`);
+            const jsonString = JSON.stringify(decoded);
+            this.terminal.writeln(`\x1b[32m[JSON]\x1b[0m ${jsonString}`);
         } catch (error) {
             // Not valid MessagePack, display as raw data
-            this.terminal.writeln(`\\x1b[33m[RAW]\\x1b[0m Not MessagePack data`);
+            this.terminal.writeln(`\x1b[33m[RAW]\x1b[0m Not MessagePack data`);
         }
         this.terminal.writeln('');
+    }
+
+    async sendHexString(hexString) {
+        const hexBytes = hexString.split(/\s+/).map(hex => parseInt(hex, 16));
+        const data = new Uint8Array(hexBytes);
+        await this.sendEncodedChunk(data);
     }
 
     async sendHexData() {
@@ -227,16 +243,21 @@ class SerialCOBSTerminal {
         
         try {
             // Parse hex string
-            const hexBytes = hexInput.split(/\\s+/).map(hex => {
+            console.log('Hex input to parse:', hexInput);
+            const hexBytes = hexInput.split(/\s+/).map(hex => {
                 const byte = parseInt(hex, 16);
                 if (isNaN(byte) || byte < 0 || byte > 255) {
                     throw new Error(`Invalid hex byte: ${hex}`);
                 }
                 return byte;
             });
-            
+            console.log('Parsed hex bytes:', hexBytes);
+            const hexes = hexBytes.map(b => b.toString(16).padStart(2, '0')).join('');
+            console.log('Hex string to send:', hexes);
             const data = new Uint8Array(hexBytes);
-            await this.sendRawData(data);
+            console.log('Uint8Array data to send:', data);
+            // await this.sendRawData(data);
+            await this.sendEncodedChunk(data, true);
             
             // Clear input
             document.getElementById('hexInput').value = '';
@@ -270,8 +291,15 @@ class SerialCOBSTerminal {
     async sendRawData(data) {
         if (!this.writer) return;
         
+        // Create a new uCOBS encoder for this data packet
+        const [push, end] = createStreamEncoder(
+            (chunk, isEnd) => this.sendEncodedChunk(chunk, isEnd),
+            (error) => this.logError(`uCOBS encode error: ${error.message}`)
+        );
+        
         // Encode with uCOBS and send
-        this.streamEncoder(data);
+        push(data);
+        end(); // Signal end of this data packet
         
         this.stats.bytesSent += data.length;
         this.stats.packetsSent++;
@@ -281,18 +309,20 @@ class SerialCOBSTerminal {
         const hexString = Array.from(data).map(byte => 
             byte.toString(16).padStart(2, '0').toUpperCase()
         ).join(' ');
-        this.terminal.writeln(`\\x1b[35m[TX]\\x1b[0m ${hexString}`);
+        this.terminal.writeln(`\x1b[35m[TX]\x1b[0m ${hexString}`);
     }
 
     async sendEncodedChunk(chunk, isEnd) {
         if (this.writer && chunk.length > 0) {
-            await this.writer.write(chunk);
+            let buffer = new Uint8Array(chunk);
+            console.log('Sending encoded chunk:', chunk, buffer);
+            await this.writer.write(buffer);
             
             // Show encoded data being sent
             const hexString = Array.from(chunk).map(byte => 
                 byte.toString(16).padStart(2, '0').toUpperCase()
             ).join(' ');
-            this.terminal.writeln(`\\x1b[90m[TX-ENC]\\x1b[0m ${hexString}`);
+            this.terminal.writeln(`\x1b[90m[TX-ENC]\x1b[0m ${hexString}`);
         }
     }
 
@@ -320,12 +350,12 @@ class SerialCOBSTerminal {
 
     clearTerminal() {
         this.terminal.clear();
-        this.terminal.writeln('\\x1b[32mTerminal cleared\\x1b[0m');
+        this.terminal.writeln('\x1b[32mTerminal cleared\x1b[0m');
         this.terminal.writeln('');
     }
 
     logError(message) {
-        this.terminal.writeln(`\\x1b[31m[ERROR]\\x1b[0m ${message}`);
+        this.terminal.writeln(`\x1b[31m[ERROR]\x1b[0m ${message}`);
         this.terminal.writeln('');
     }
 }

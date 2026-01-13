@@ -1,4 +1,5 @@
 const path = require('path');
+const NodePolyfillPlugin = require('node-polyfill-webpack-plugin');
 
 module.exports = {
   entry: './src/app.js',
@@ -10,5 +11,8 @@ module.exports = {
   resolve: {
     extensions: ['.js']
   },
+  plugins: [
+    new NodePolyfillPlugin()
+  ],
   devtool: 'source-map'
 };
