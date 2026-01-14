@@ -5,6 +5,62 @@ import { FitAddon } from '@xterm/addon-fit';
 import crc8 from 'crc/crc8';
 const sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
+// Browser-compatible color utility inspired by yoctocolors
+const colors = {
+    // Reset
+    reset: '\x1b[0m',
+    
+    // Basic colors
+    black: (text) => `\x1b[30m${text}\x1b[0m`,
+    red: (text) => `\x1b[31m${text}\x1b[0m`,
+    green: (text) => `\x1b[32m${text}\x1b[0m`,
+    yellow: (text) => `\x1b[33m${text}\x1b[0m`,
+    blue: (text) => `\x1b[34m${text}\x1b[0m`,
+    magenta: (text) => `\x1b[35m${text}\x1b[0m`,
+    cyan: (text) => `\x1b[36m${text}\x1b[0m`,
+    white: (text) => `\x1b[37m${text}\x1b[0m`,
+    gray: (text) => `\x1b[90m${text}\x1b[0m`,
+    grey: (text) => `\x1b[90m${text}\x1b[0m`,
+    
+    // Bright colors
+    blackBright: (text) => `\x1b[90m${text}\x1b[0m`,
+    redBright: (text) => `\x1b[91m${text}\x1b[0m`,
+    greenBright: (text) => `\x1b[92m${text}\x1b[0m`,
+    yellowBright: (text) => `\x1b[93m${text}\x1b[0m`,
+    blueBright: (text) => `\x1b[94m${text}\x1b[0m`,
+    magentaBright: (text) => `\x1b[95m${text}\x1b[0m`,
+    cyanBright: (text) => `\x1b[96m${text}\x1b[0m`,
+    whiteBright: (text) => `\x1b[97m${text}\x1b[0m`,
+    
+    // Background colors
+    bgBlack: (text) => `\x1b[40m${text}\x1b[0m`,
+    bgRed: (text) => `\x1b[41m${text}\x1b[0m`,
+    bgGreen: (text) => `\x1b[42m${text}\x1b[0m`,
+    bgYellow: (text) => `\x1b[43m${text}\x1b[0m`,
+    bgBlue: (text) => `\x1b[44m${text}\x1b[0m`,
+    bgMagenta: (text) => `\x1b[45m${text}\x1b[0m`,
+    bgCyan: (text) => `\x1b[46m${text}\x1b[0m`,
+    bgWhite: (text) => `\x1b[47m${text}\x1b[0m`,
+    
+    // Modifiers
+    bold: (text) => `\x1b[1m${text}\x1b[22m`,
+    dim: (text) => `\x1b[2m${text}\x1b[22m`,
+    italic: (text) => `\x1b[3m${text}\x1b[23m`,
+    underline: (text) => `\x1b[4m${text}\x1b[24m`,
+    strikethrough: (text) => `\x1b[9m${text}\x1b[29m`
+};
+
+// Application-specific color helpers
+const colorize = {
+    success: colors.green,
+    error: colors.red,
+    info: colors.blue,
+    decoded: colors.cyan,
+    tx: colors.magenta,
+    warning: colors.yellow,
+    muted: colors.gray
+};
+
 // Check if Web Serial API is supported
 if (!("serial" in navigator)) {
     alert("Web Serial API is not supported in this browser. Please use Chrome/Edge 89+ or similar.");
@@ -73,15 +129,28 @@ class SerialCOBSTerminal {
         document.getElementById('jsonInput').addEventListener('input', () => this.updateSendButtons());
         
         this.updateConnectionStatus('Disconnected', 'secondary');
-        this.terminal.writeln('\x1b[32mSerial Terminal Ready\x1b[0m');
+        this.terminal.writeln(colorize.success('Serial Terminal Ready'));
         this.terminal.writeln('Connect to a serial port to begin communication.');
         this.terminal.writeln('');
     }
 
     async connectToSerial() {
         try {
+            // Check if CB1e filter is enabled
+            const cb1eFilter = document.getElementById('cb1eFilter').checked;
+            
+            let requestOptions = {};
+            if (cb1eFilter) {
+                // Filter for CB1e USB devices (vendor ID 0x303a)
+                requestOptions = {
+                    filters: [{
+                        usbVendorId: 0x303a
+                    }]
+                };
+            }
+            
             // Request a port and open a connection
-            this.port = await navigator.serial.requestPort();
+            this.port = await navigator.serial.requestPort(requestOptions);
             
             const baudRate = parseInt(document.getElementById('baudRate').value);
             
@@ -95,7 +164,7 @@ class SerialCOBSTerminal {
             });
 
             this.updateConnectionStatus('Connected', 'success');
-            this.terminal.writeln(`\x1b[32m[CONNECTED]\x1b[0m Serial port opened at ${baudRate} baud`);
+            this.terminal.writeln(`${colorize.success('[CONNECTED]')} Serial port opened at ${baudRate} baud`);
             this.terminal.writeln('');
             
             document.getElementById('connectBtn').disabled = true;
@@ -137,7 +206,7 @@ class SerialCOBSTerminal {
             }
 
             this.updateConnectionStatus('Disconnected', 'secondary');
-            this.terminal.writeln(`\x1b[31m[DISCONNECTED]\x1b[0m Serial port closed`);
+            this.terminal.writeln(`${colorize.error('[DISCONNECTED]')} Serial port closed`);
             this.terminal.writeln('');
             
             document.getElementById('connectBtn').disabled = false;
@@ -185,7 +254,7 @@ class SerialCOBSTerminal {
             byte.toString(16).padStart(2, '0').toUpperCase()
         ).join(' ');
         
-        this.terminal.writeln(`\x1b[34m[RX]\x1b[0m ${hexString}`);
+        this.terminal.writeln(`${colorize.info('[RX]')} ${hexString}`);
         
         // Feed data to uCOBS stream decoder
         this.streamDecoder(data);
@@ -200,10 +269,10 @@ class SerialCOBSTerminal {
             const hexString = Array.from(chunk).map(byte => 
                 byte.toString(16).padStart(2, '0').toUpperCase()
             ).join(' ');
-            this.terminal.writeln(`\x1b[36m[DECODED]\x1b[0m ${hexString}`);
+            this.terminal.writeln(`${colorize.decoded('[DECODED]')} ${hexString}`);
 
             if (chunk.length < 3) {
-                return this.terminal.writeln(`\x1b[33m[RAW]\x1b[0m Packet too short to process: ${hexString}`);
+                return this.terminal.writeln(`${colorize.warning('[RAW]')} Packet too short to process: ${hexString}`);
             }
 
             let packet_id = chunk[0];
@@ -211,7 +280,7 @@ class SerialCOBSTerminal {
             let payload = chunk.slice(1, chunk.length - 1);
             console.log('Processing packet ID:', packet_id, 'Checksum:', checksum, 'Payload:', payload);
             if (checksum != crc8(payload)) {
-                return this.terminal.writeln(`\x1b[31m[ERROR]\x1b[0m Checksum mismatch for packet ID ${packet_id}: expected ${crc8(payload).toString(16).toUpperCase().padStart(2,'0')}, got ${checksum.toString(16).toUpperCase().padStart(2,'0')}`);
+                return this.terminal.writeln(`${colorize.error('[ERROR]')} Checksum mismatch for packet ID ${packet_id}: expected ${crc8(payload).toString(16).toUpperCase().padStart(2,'0')}, got ${checksum.toString(16).toUpperCase().padStart(2,'0')}`);
             }
             
             // Try to decode as MessagePack
@@ -223,10 +292,10 @@ class SerialCOBSTerminal {
         try {
             const decoded = unpack(data);
             const jsonString = JSON.stringify(decoded);
-            this.terminal.writeln(`\x1b[32m[JSON]\x1b[0m ${jsonString}`);
+            this.terminal.writeln(`${colorize.success('[JSON]')} ${jsonString}`);
         } catch (error) {
             // Not valid MessagePack, display as raw data
-            this.terminal.writeln(`\x1b[33m[RAW]\x1b[0m Not MessagePack data`);
+            this.terminal.writeln(`${colorize.warning('[RAW]')} Not MessagePack data`);
         }
         this.terminal.writeln('');
     }
@@ -309,7 +378,7 @@ class SerialCOBSTerminal {
         const hexString = Array.from(data).map(byte => 
             byte.toString(16).padStart(2, '0').toUpperCase()
         ).join(' ');
-        this.terminal.writeln(`\x1b[35m[TX]\x1b[0m ${hexString}`);
+        this.terminal.writeln(`${colorize.tx('[TX]')} ${hexString}`);
     }
 
     async sendEncodedChunk(chunk, isEnd) {
@@ -322,7 +391,7 @@ class SerialCOBSTerminal {
             const hexString = Array.from(chunk).map(byte => 
                 byte.toString(16).padStart(2, '0').toUpperCase()
             ).join(' ');
-            this.terminal.writeln(`\x1b[90m[TX-ENC]\x1b[0m ${hexString}`);
+            this.terminal.writeln(`${colorize.muted('[TX-ENC]')} ${hexString}`);
         }
     }
 
@@ -350,12 +419,12 @@ class SerialCOBSTerminal {
 
     clearTerminal() {
         this.terminal.clear();
-        this.terminal.writeln('\x1b[32mTerminal cleared\x1b[0m');
+        this.terminal.writeln(colorize.success('Terminal cleared'));
         this.terminal.writeln('');
     }
 
     logError(message) {
-        this.terminal.writeln(`\x1b[31m[ERROR]\x1b[0m ${message}`);
+        this.terminal.writeln(`${colorize.error('[ERROR]')} ${message}`);
         this.terminal.writeln('');
     }
 }
