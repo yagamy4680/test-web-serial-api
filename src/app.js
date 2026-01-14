@@ -83,7 +83,7 @@ class SerialCOBSTerminal {
         
         // Initialize terminal
         this.terminal = new Terminal({
-            fontSize: 12,
+            fontSize: 15,
             fontFamily: 'Courier New, monospace',
             theme: {
                 background: '#000000',
@@ -129,7 +129,7 @@ class SerialCOBSTerminal {
         document.getElementById('jsonInput').addEventListener('input', () => this.updateSendButtons());
         
         this.updateConnectionStatus('Disconnected', 'secondary');
-        this.terminal.writeln(colorize.success('Serial Terminal Ready'));
+        this.terminal.writeln(colorize.greenBright('Serial Terminal Ready'));
         this.terminal.writeln('Connect to a serial port to begin communication.');
         this.terminal.writeln('');
     }
@@ -174,6 +174,9 @@ class SerialCOBSTerminal {
             // Get writer for sending data
             this.writer = this.port.writable.getWriter();
 
+            // Add event listeners for serial port connect/disconnect
+            this.setupSerialEventListeners();
+
             // Start reading data
             this.startReading();
 
@@ -216,6 +219,59 @@ class SerialCOBSTerminal {
         } catch (error) {
             this.logError('Failed to disconnect: ' + error.message);
         }
+    }
+
+    setupSerialEventListeners() {
+        if (!this.port) return;
+        
+        // Listen for connect events
+        this.port.addEventListener('connect', () => {
+            this.terminal.writeln(`${colorize.success('[DEVICE CONNECTED]')} Serial device reconnected`);
+            this.terminal.writeln('');
+            this.updateConnectionStatus('Connected', 'success');
+            
+            // Re-enable functionality
+            document.getElementById('connectBtn').disabled = true;
+            document.getElementById('disconnectBtn').disabled = false;
+            this.updateSendButtons();
+        });
+        
+        // Listen for disconnect events  
+        this.port.addEventListener('disconnect', () => {
+            this.terminal.writeln(`${colorize.warning('[DEVICE DISCONNECTED]')} Serial device unplugged or connection lost`);
+            this.terminal.writeln('');
+            this.updateConnectionStatus('Disconnected', 'warning');
+            
+            // Clean up and disable functionality
+            this.handleUnexpectedDisconnect();
+        });
+    }
+
+    handleUnexpectedDisconnect() {
+        // Stop reading if still active
+        this.isReading = false;
+        
+        // Clean up resources
+        if (this.reader) {
+            this.reader.releaseLock().catch(() => {});
+            this.reader = null;
+        }
+        
+        if (this.writer) {
+            this.writer.releaseLock().catch(() => {});
+            this.writer = null;
+        }
+        
+        // Update UI state
+        document.getElementById('connectBtn').disabled = false;
+        document.getElementById('disconnectBtn').disabled = true;
+        this.updateSendButtons();
+        
+        // Reset port reference
+        this.port = null;
+        
+        this.terminal.writeln(`${colorize.info('[INFO]')} Click 'Connect' to establish a new connection`);
+        this.terminal.writeln('');
     }
 
     async startReading() {
