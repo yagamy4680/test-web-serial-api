@@ -199,6 +199,14 @@ class SerialCOBSTerminal {
             }, 100);
         });
 
+        // Send data panel visibility toggle
+        document.getElementById('showSendDataPanel').addEventListener('change', (e) => {
+            const sendDataCard = document.getElementById('sendDataCard');
+            sendDataCard.style.display = e.target.checked ? 'block' : 'none';
+            // Update send buttons when panel visibility changes
+            this.updateSendButtons();
+        });
+
         this.updateConnectionStatus('Disconnected', 'secondary');
         this.terminal_println(`${colorize.success('Serial Terminal Ready')}`);
         this.terminal_println(`Connect to a serial port to begin communication.`);
@@ -466,7 +474,7 @@ class SerialCOBSTerminal {
     async sendToSerial(chunk, isEnd) {
         if (this.writer && chunk.length > 0) {
             let buffer = new Uint8Array(chunk);
-            console.log('Sending encoded chunk:', chunk, buffer);
+            // console.log('Sending encoded chunk:', chunk, buffer);
             await this.writer.write(buffer);
 
             this.stats.bytesSent += chunk.length;

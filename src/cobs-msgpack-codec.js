@@ -42,11 +42,12 @@ export function to_hex(byteArray, delimiter = '') {
 
 
 export class CobsMsgpackCodec {
-    constructor() {
+    constructor(verbose = false) {
         this.encode = createBlockEncoder((encoded) => this.on_encoded_chunk(encoded));
         this.decode = createStreamDecoder((decoded, isEnd) => this.on_decoded_chunk(decoded, isEnd));
         this.encoder_callback = null;
         this.decoder_callback = null;
+        this.verbose = verbose;
     }
 
     attach_encoder_callback(encoder_callback) {
@@ -75,7 +76,9 @@ export class CobsMsgpackCodec {
         // Compute CRC8 checksum
         const checksum = crc8(msgpackBytes);
         payload[payloadLength - 1] = checksum;
-        console.log(`Payload before COBS encoding: ${to_hex(payload, '.')}`);
+        if (this.verbose) {
+            console.log(`Payload before COBS encoding: ${to_hex(payload, '.')}`);
+        }
 
         // COBS encode the payload, which is emitted via encoder_push callback
         this.encode(payload);
@@ -89,14 +92,18 @@ export class CobsMsgpackCodec {
     }
 
     on_encoded_chunk(encoded) {
-        console.log(`COBS Encoded chunk: ${to_hex(encoded, '.')}`);
+        if (this.verbose) {
+            console.log(`COBS Encoded chunk: ${to_hex(encoded, '.')}`);
+        }
         if (this.encoder_callback) {
             this.encoder_callback(encoded);
         }
     }
 
     on_decoded_chunk(decoded, isEnd) {
-        console.log(`COBS Decoded chunk: ${to_hex(decoded, '.')}, isEnd: ${isEnd}`);
+        if (this.verbose) {
+            console.log(`COBS Decoded chunk: ${to_hex(decoded, '.')}, isEnd: ${isEnd}`);
+        }
 
         if (decoded.length < 3) {
             console.warn('Decoded data too short to contain valid payload');
@@ -116,7 +123,9 @@ export class CobsMsgpackCodec {
 
         // Unpack MessagePack data
         const argsArray = unpack(msgpackBytes);
-        console.log(`Decoded message - ID: ${id}, Args:`, argsArray);
+        if (this.verbose) {
+            console.log(`Decoded message - ID: ${id}, Args:`, argsArray);
+        }
 
         // Here you can emit an event or call a callback with the decoded message
         if (this.decoder_callback) {
