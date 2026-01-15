@@ -102,7 +102,10 @@
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h6 class="mb-0">Device Responses</h6>
-                        <button id="clearDecodedTerminal" class="btn btn-sm btn-outline-secondary">Clear</button>
+                        <div class="d-flex align-items-center gap-3">
+                            <small class="text-muted current-time" id="currentTime1">--:--:--</small>
+                            <button id="clearDecodedTerminal" class="btn btn-sm btn-outline-secondary">Clear</button>
+                        </div>
                     </div>
                     <div class="card-body p-0">
                         <div id="decodedTerminal" class="terminal-container" style="height: 500px;"></div>
@@ -113,7 +116,10 @@
                 <div class="card mt-3" id="debugTerminalCard" style="display: none;">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h6 class="mb-0">Debug Terminal</h6>
-                        <button id="clearTerminal" class="btn btn-sm btn-outline-secondary">Clear Terminal</button>
+                        <div class="d-flex align-items-center gap-3">
+                            <small class="text-muted current-time" id="currentTime2">--:--:--</small>
+                            <button id="clearTerminal" class="btn btn-sm btn-outline-secondary">Clear Terminal</button>
+                        </div>
                     </div>
                     <div class="card-body p-0">
                         <div id="terminal" class="terminal-container" style="height: 350px;"></div>
@@ -127,7 +133,10 @@
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h6 class="mb-0">Board Information</h6>
-                        <button id="clearBoardInfo" class="btn btn-sm btn-outline-secondary">Clear</button>
+                        <div class="d-flex align-items-center gap-3">
+                            <small class="text-muted current-time" id="currentTime3">--:--:--</small>
+                            <button id="clearBoardInfo" class="btn btn-sm btn-outline-secondary">Clear</button>
+                        </div>
                     </div>
                     <div class="card-body p-0">
                         <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
@@ -168,8 +177,9 @@
                 
                 <!-- Device Status Panel -->
                 <div class="card mt-3">
-                    <div class="card-header">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h6 class="mb-0">Device Status</h6>
+                        <small class="text-muted current-time" id="currentTime4">--:--:--</small>
                     </div>
                     <div class="card-body">
                         <div class="row text-center mb-3">
@@ -199,8 +209,9 @@
                 
                 <!-- Statistics -->
                 <div class="card mt-3">
-                    <div class="card-header">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h6 class="mb-0">Statistics</h6>
+                        <small class="text-muted current-time" id="currentTime5">--:--:--</small>
                     </div>
                     <div class="card-body">
                         <div class="row text-center">
@@ -229,8 +240,9 @@
                 
                 <!-- Send Data Panel (Hidden by default) -->
                 <div class="card mt-3" id="sendDataCard" style="display: none;">
-                    <div class="card-header">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h6 class="mb-0">Send Data</h6>
+                        <small class="text-muted current-time" id="currentTime6">--:--:--</small>
                     </div>
                     <div class="card-body">
                         <div class="mb-3">

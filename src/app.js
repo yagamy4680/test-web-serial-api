@@ -103,6 +103,7 @@ class SerialCOBSTerminal {
         this.heartbeatTimer = setInterval(async () => await this.onHeartbeatTmeout(), cbConstants.common_constants.MAX_HEARTBEAT_INTERVAL_MS);
         this.sensorTimer = setInterval(async () => await this.onSensorTimeout(), 1000);
         this.statusUpdateTimer = setInterval(() => this.updateStatusDisplay(), 1000); // Update status every second
+        this.currentTimeTimer = setInterval(() => this.updateCurrentTime(), 1000); // Update current time every second
 
         // Initialize terminal
         this.debugTerminal = new Terminal({
@@ -212,6 +213,9 @@ class SerialCOBSTerminal {
 
         // Initialize status display
         this.updateStatusDisplay();
+
+        // Initialize current time display
+        this.updateCurrentTime();
     }
 
     async connectToSerial() {
@@ -560,6 +564,24 @@ class SerialCOBSTerminal {
                 heartbeatElement.className = 'badge bg-secondary';
             }
         }
+    }
+
+    updateCurrentTime() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        const day = now.getDate().toString().padStart(2, '0');
+        const hours = now.getHours().toString().padStart(2, '0');
+        const minutes = now.getMinutes().toString().padStart(2, '0');
+        const seconds = now.getSeconds().toString().padStart(2, '0');
+        
+        const timeString = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        
+        // Update all current time displays
+        const timeElements = document.querySelectorAll('.current-time');
+        timeElements.forEach(element => {
+            element.textContent = timeString;
+        });
     }
 
     // Centralized terminal output with timestamp
