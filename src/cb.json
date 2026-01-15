@@ -3,7 +3,12 @@
         "PKTID_COMMON_RESERVED": 0,
         "PKTID_COMMON_BEGIN": 16,
         "PKTID_H2B_COMMON_GET_INFO": 17,
-        "PKTID_B2H_COMMON_GET_INFO_RSP": 18
+        "PKTID_B2H_COMMON_GET_INFO_RSP": 18,
+        "PKTID_H2B_COMMON_GET_ATTRIBUTE": 19,
+        "PKTID_B2H_COMMON_GET_ATTRIBUTE_RSP": 20,
+        "PKTID_H2B_COMMON_SET_ATTRIBUTE": 21,
+        "PKTID_B2H_COMMON_SET_ATTRIBUTE_RSP": 22,
+        "PKTID_HEARTBEAT": 23
     },
     "extended_packet_ids": {
         "PKTID_CB2CM_STREAM": 48,
@@ -26,6 +31,16 @@
         "BOARD_INFO_TTCB_MCU_MODEL": 23,
         "BOARD_INFO_TTCB_BLUETOOTH_MAC_ADDRESS": 24,
         "BOARD_INFO_TTCB_WIFI_MAC_ADDRESS": 25
+    },
+    "board_attribute_types": {
+        "BOARD_ATTR_TTCB_COMMON_BASE": 16,
+        "BOARD_ATTR_TTCB_COMMON_FREE_HEAP_SIZE": 17,
+        "BOARD_ATTR_TTCB_EXTENDED_BASE": 128,
+        "BOARD_ATTR_TTCB_BOOTING_COUNT": 129,
+        "BOARD_ATTR_TTCB_PERIPHERAL_CONFIG": 130
+    },
+    "common_constants": {
+        "MAX_HEARTBEAT_INTERVAL_MS": 500
     },
     "debug_controls": {
         "DBG_ALL": 0,

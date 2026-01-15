@@ -82,33 +82,8 @@ class SerialCOBSTerminal {
         this.writer = null;
         this.isReading = false;
         this.codec = new CobsMsgpackCodec();
-        this.codec.attach_encoder_callback((chunk) => {
-            // console.log('Encoded chunk from codec:', chunk);
-            this.sendToSerial(chunk, false);
-        });
-        this.codec.attach_decoder_callback((id, argsArray) => {
-            this.stats.packetsDecoded++;
-            // console.log('Decoded arguments from codec:', id, argsArray);
-            const jsonString = JSON.stringify({ id: id, args: argsArray });
-            this.response_terminal_println(`${colors.white('USB/CDC')} => ${jsonString}`);
-            if (id == cbConstants.common_packet_ids.PKTID_B2H_COMMON_GET_INFO_RSP) {
-                const rsp = argsArray[0];
-                const infoType = argsArray[1];
-                const infoValue = argsArray[2];
-                const infoTypeName = this.boardInfoTypeMap[infoType.toString()] || 'UNKNOWN';
-
-                if (rsp != cbConstants.common_response_codes.PKT_RSP_OK) {
-                    this.updateBoardInfoTable(infoTypeName, 'ERROR', 'danger');
-                    this.terminal_println(`${colors.red('Error:')} Board Info request failed for ${infoTypeName} with code ${rsp}`);
-                    return;
-                }
-
-                console.log('Received board info:', infoTypeName, infoValue);
-                this.updateBoardInfoTable(infoTypeName, infoValue, 'success');
-                // this.terminal_println(`${colors.white('Board Info:')} ${colors.yellow(infoTypeName)} = ${colors.green(infoValue)}`);
-                return;
-            }
-        });
+        this.codec.attach_encoder_callback(async (chunk) => await this.sendToSerial(chunk));
+        this.codec.attach_decoder_callback(async (id, args) => await this.onPacket(id, args));
 
         // Statistics
         this.stats = {
@@ -117,6 +92,9 @@ class SerialCOBSTerminal {
             packetsDecoded: 0,
             packetsSent: 0
         };
+
+        this.heartbeatTimer = setInterval(async () => await this.onHeartbeatTmeout(), cbConstants.common_constants.MAX_HEARTBEAT_INTERVAL_MS);
+        this.sensorTimer = setInterval(async () => await this.onSensorTimeout(), 1000);
 
         // Initialize terminal
         this.debugTerminal = new Terminal({
@@ -155,11 +133,15 @@ class SerialCOBSTerminal {
             const value = cbConstants.board_info_types[key];
             this.boardInfoTypeMap[value.toString()] = key;
         }
+        this.boardAttributeTypeMap = {};
+        for (let key in cbConstants.board_attribute_types) {
+            const value = cbConstants.board_attribute_types[key];
+            this.boardAttributeTypeMap[value.toString()] = key;
+        }
 
         // Initialize board info storage
         this.boardInfo = new Map();
         this.initializeBoardInfoTable();
-
         this.initializeUI();
     }
 
@@ -476,7 +458,7 @@ class SerialCOBSTerminal {
         }
     }
 
-    async sendToSerial(chunk, isEnd) {
+    async sendToSerial(chunk, isEnd = false) {
         if (this.writer && chunk.length > 0) {
             let buffer = new Uint8Array(chunk);
             // console.log('Sending encoded chunk:', chunk, buffer);
@@ -594,7 +576,7 @@ class SerialCOBSTerminal {
         const uploadBtn = document.getElementById('uploadBoardInfo');
         const macAddressRow = this.boardInfo.get('bluetooth_mac_address');
 
-        console.log('Updating upload button. MAC address row:', macAddressRow);
+        // console.log('Updating upload button. MAC address row:', macAddressRow);
 
         // Enable upload button if we have MAC address and it's valid
         const hasValidMac = macAddressRow &&
@@ -602,9 +584,9 @@ class SerialCOBSTerminal {
             macAddressRow.value !== 'ERROR' &&
             macAddressRow.value !== 'Pending...';
 
-        console.log('Has valid MAC:', hasValidMac);
+        // console.log('Has valid MAC:', hasValidMac);
         uploadBtn.disabled = !hasValidMac;
-        console.log('Upload button disabled:', uploadBtn.disabled);
+        // console.log('Upload button disabled:', uploadBtn.disabled);
     }
 
     async uploadBoardInfo() {
@@ -707,6 +689,80 @@ class SerialCOBSTerminal {
         this.terminal_println(`${colorize.error('[ERROR]')} ${message}`);
         this.terminal_println('');
     }
+
+
+    async onHeartbeatTmeout() {
+        const { PKTID_HEARTBEAT } = cbConstants.common_packet_ids;
+        if (this.port && this.isReading) {
+            // Send heartbeat packet
+            this.codec.push_arguments(PKTID_HEARTBEAT, [Date.now()]);
+            // this.terminal_println(`${colorize.info('[HEARTBEAT]')} Sent heartbeat packet`);
+        }
+    }
+
+    async onSensorTimeout() {
+        const { PKTID_H2B_COMMON_GET_ATTRIBUTE } = cbConstants.common_packet_ids;
+        const { BOARD_ATTR_TTCB_COMMON_FREE_HEAP_SIZE } = cbConstants.board_attribute_types;
+        if (this.port && this.isReading) {
+            this.codec.push_arguments(PKTID_H2B_COMMON_GET_ATTRIBUTE, [BOARD_ATTR_TTCB_COMMON_FREE_HEAP_SIZE]);
+        }
+    }
+
+    async onPacket(id, args) {
+        let { common_packet_ids } = cbConstants;
+        let { PKT_RSP_OK } = cbConstants.common_response_codes;
+        let dumped = true;
+        this.stats.packetsDecoded++;
+        // console.log('Decoded arguments from codec:', id, args);
+        if (id == common_packet_ids.PKTID_B2H_COMMON_GET_INFO_RSP) {
+            const rsp = args[0];
+            const infoType = args[1];
+            const infoValue = args[2];
+            const infoTypeName = this.boardInfoTypeMap[infoType.toString()] || 'UNKNOWN';
+
+            if (rsp != PKT_RSP_OK) {
+                this.updateBoardInfoTable(infoTypeName, 'ERROR', 'danger');
+                this.terminal_println(`${colors.red('Error:')} Board Info request failed for ${infoTypeName} with code ${rsp}`);
+            }
+            else {
+                console.log('Received board info:', infoTypeName, infoValue);
+                this.updateBoardInfoTable(infoTypeName, infoValue, 'success');
+                // this.terminal_println(`${colors.white('Board Info:')} ${colors.yellow(infoTypeName)} = ${colors.green(infoValue)}`);
+            }
+        }
+        else if (id == common_packet_ids.PKTID_B2H_COMMON_GET_ATTRIBUTE_RSP) {
+            const rsp = args[0];
+            const infoType = args[1];
+            const infoValue = args[2];
+            const infoTypeName = this.boardAttributeTypeMap[infoType.toString()] || 'UNKNOWN';
+            if (rsp != PKT_RSP_OK) {
+                console.warn(`Received error response for attribute ${infoTypeName}: code ${rsp}`);
+            }
+            else {
+                // console.log(`Received attribute ${infoTypeName}: value ${infoValue}`);
+                if (infoType == cbConstants.board_attribute_types.BOARD_ATTR_TTCB_COMMON_FREE_HEAP_SIZE) {
+                    console.log(`Free heap size: ${infoValue} bytes`);
+                    this.terminal_println(`${colorize.info('[SENSOR]')} Free Heap Size: ${infoValue} bytes`);
+                }
+                else {
+                    console.log(`Received attribute ${infoTypeName}: value ${infoValue}`);
+                }
+            }
+        }
+        else if (id == common_packet_ids.PKTID_HEARTBEAT) {
+            dumped = false;
+            const uptime = args[0];
+            this.terminal_println(`${colorize.info('[HEARTBEAT]')} Uptime: ${uptime} ms`);
+        }
+        else {
+            this.terminal_println(`${colors.yellow('Warning:')} Unhandled packet ID ${id} with args: ${JSON.stringify(args)}`);
+        }
+        if (dumped) {
+            const jsonString = JSON.stringify({ id: id, args: args });
+            this.response_terminal_println(`${colors.white('USB/CDC')} => ${jsonString}`);
+        }
+    }
+
 }
 
 // Initialize the application when DOM is ready
