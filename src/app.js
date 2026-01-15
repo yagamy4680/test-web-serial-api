@@ -93,8 +93,16 @@ class SerialCOBSTerminal {
             packetsSent: 0
         };
 
+        // Status tracking
+        this.status = {
+            freeHeapSize: null,
+            uptime: null,
+            lastHeartbeat: null
+        };
+
         this.heartbeatTimer = setInterval(async () => await this.onHeartbeatTmeout(), cbConstants.common_constants.MAX_HEARTBEAT_INTERVAL_MS);
         this.sensorTimer = setInterval(async () => await this.onSensorTimeout(), 1000);
+        this.statusUpdateTimer = setInterval(() => this.updateStatusDisplay(), 1000); // Update status every second
 
         // Initialize terminal
         this.debugTerminal = new Terminal({
@@ -201,6 +209,9 @@ class SerialCOBSTerminal {
 
         // Initialize upload button state
         this.updateUploadButton();
+
+        // Initialize status display
+        this.updateStatusDisplay();
     }
 
     async connectToSerial() {
@@ -287,6 +298,12 @@ class SerialCOBSTerminal {
             document.getElementById('connectBtn').disabled = false;
             document.getElementById('disconnectBtn').disabled = true;
             this.updateSendButtons();
+
+            // Clear status when disconnected
+            this.status.freeHeapSize = null;
+            this.status.uptime = null;
+            this.status.lastHeartbeat = null;
+            this.updateStatusDisplay();
 
         } catch (error) {
             this.logError('Failed to disconnect: ' + error.message);
@@ -495,6 +512,54 @@ class SerialCOBSTerminal {
         document.getElementById('bytesSent').textContent = this.stats.bytesSent;
         document.getElementById('packetsDecoded').textContent = this.stats.packetsDecoded;
         document.getElementById('packetsSent').textContent = this.stats.packetsSent;
+    }
+
+    updateStatusDisplay() {
+        // Update free heap size
+        const heapElement = document.getElementById('freeHeapSize');
+        if (heapElement) {
+            if (this.status.freeHeapSize !== null) {
+                heapElement.textContent = `${this.status.freeHeapSize.toLocaleString()} bytes`;
+                heapElement.className = 'badge bg-success';
+            } else {
+                heapElement.textContent = 'N/A';
+                heapElement.className = 'badge bg-secondary';
+            }
+        }
+
+        // Update uptime
+        const uptimeElement = document.getElementById('uptime');
+        if (uptimeElement) {
+            if (this.status.uptime !== null) {
+                const uptimeSeconds = (this.status.uptime / 1000).toFixed(2);
+                uptimeElement.textContent = `${uptimeSeconds}s`;
+                uptimeElement.className = 'badge bg-primary';
+            } else {
+                uptimeElement.textContent = 'N/A';
+                uptimeElement.className = 'badge bg-secondary';
+            }
+        }
+
+        // Update last heartbeat indicator
+        const heartbeatElement = document.getElementById('lastHeartbeat');
+        if (heartbeatElement) {
+            if (this.status.lastHeartbeat !== null) {
+                const timeSinceHeartbeat = Date.now() - this.status.lastHeartbeat;
+                if (timeSinceHeartbeat < 5000) { // Less than 5 seconds
+                    heartbeatElement.textContent = 'Online';
+                    heartbeatElement.className = 'badge bg-success';
+                } else if (timeSinceHeartbeat < 10000) { // Less than 10 seconds
+                    heartbeatElement.textContent = 'Warning';
+                    heartbeatElement.className = 'badge bg-warning';
+                } else {
+                    heartbeatElement.textContent = 'Offline';
+                    heartbeatElement.className = 'badge bg-danger';
+                }
+            } else {
+                heartbeatElement.textContent = 'N/A';
+                heartbeatElement.className = 'badge bg-secondary';
+            }
+        }
     }
 
     // Centralized terminal output with timestamp
@@ -741,18 +806,22 @@ class SerialCOBSTerminal {
             else {
                 // console.log(`Received attribute ${infoTypeName}: value ${infoValue}`);
                 if (infoType == cbConstants.board_attribute_types.BOARD_ATTR_TTCB_COMMON_FREE_HEAP_SIZE) {
-                    console.log(`Free heap size: ${infoValue} bytes`);
-                    this.terminal_println(`${colorize.info('[SENSOR]')} Free Heap Size: ${infoValue} bytes`);
+                    // console.log(`Free heap size: ${infoValue} bytes`);
+                    this.status.freeHeapSize = infoValue;
+                    this.updateStatusDisplay();
                 }
                 else {
-                    console.log(`Received attribute ${infoTypeName}: value ${infoValue}`);
+                    // console.log(`Received attribute ${infoTypeName}: value ${infoValue}`);
                 }
             }
         }
         else if (id == common_packet_ids.PKTID_HEARTBEAT) {
             dumped = false;
             const uptime = args[0];
-            this.terminal_println(`${colorize.info('[HEARTBEAT]')} Uptime: ${uptime} ms`);
+            this.status.uptime = uptime;
+            this.status.lastHeartbeat = Date.now();
+            this.updateStatusDisplay();
+            // this.terminal_println(`${colorize.info('[HEARTBEAT]')} Uptime: ${uptime} ms`);
         }
         else {
             this.terminal_println(`${colors.yellow('Warning:')} Unhandled packet ID ${id} with args: ${JSON.stringify(args)}`);
