@@ -83,12 +83,12 @@ class SerialCOBSTerminal {
         this.isReading = false;
         this.codec = new CobsMsgpackCodec();
         this.codec.attach_encoder_callback((chunk) => {
-            console.log('Encoded chunk from codec:', chunk);
+            // console.log('Encoded chunk from codec:', chunk);
             this.sendToSerial(chunk, false);
         });
         this.codec.attach_decoder_callback((id, argsArray) => {
             this.stats.packetsDecoded++;
-            console.log('Decoded arguments from codec:', id, argsArray);
+            // console.log('Decoded arguments from codec:', id, argsArray);
             const jsonString = JSON.stringify({ id: id, args: argsArray });
             this.response_terminal_println(`${colors.white('USB/CDC')} => ${jsonString}`);
             if (id == cbConstants.common_packet_ids.PKTID_B2H_COMMON_GET_INFO_RSP) {
@@ -103,6 +103,7 @@ class SerialCOBSTerminal {
                     return;
                 }
 
+                console.log('Received board info:', infoTypeName, infoValue);
                 this.updateBoardInfoTable(infoTypeName, infoValue, 'success');
                 // this.terminal_println(`${colors.white('Board Info:')} ${colors.yellow(infoTypeName)} = ${colors.green(infoValue)}`);
                 return;
@@ -181,13 +182,14 @@ class SerialCOBSTerminal {
         document.getElementById('clearTerminal').addEventListener('click', () => this.clearTerminal());
         document.getElementById('clearDecodedTerminal').addEventListener('click', () => this.clearResponseTerminal());
         document.getElementById('clearBoardInfo').addEventListener('click', () => this.clearBoardInfoTable());
+        document.getElementById('uploadBoardInfo').addEventListener('click', () => this.uploadBoardInfo());
         document.getElementById('sendHexBtn').addEventListener('click', () => this.sendHexData());
         document.getElementById('sendJsonBtn').addEventListener('click', () => this.sendJsonData());
 
         // Enable/disable send buttons based on input
         document.getElementById('hexInput').addEventListener('input', () => this.updateSendButtons());
         document.getElementById('jsonInput').addEventListener('input', () => this.updateSendButtons());
-        
+
         // Debug terminal visibility toggle
         document.getElementById('showDebugTerminal').addEventListener('change', (e) => {
             const debugCard = document.getElementById('debugTerminalCard');
@@ -214,6 +216,9 @@ class SerialCOBSTerminal {
 
         // Initialize board info table
         this.initializeBoardInfoTable();
+
+        // Initialize upload button state
+        this.updateUploadButton();
     }
 
     async connectToSerial() {
@@ -547,6 +552,9 @@ class SerialCOBSTerminal {
     }
 
     updateBoardInfoTable(infoType, value, status) {
+        infoType = infoType.replace('BOARD_INFO_TTCB_', '');
+        // console.log(`Updated board info table: ${infoType} = ${value} (${status})`);
+
         const tableBody = document.getElementById('boardInfoTableBody');
         const rowId = `boardInfo-${infoType}`;
         let row = document.getElementById(rowId);
@@ -576,7 +584,95 @@ class SerialCOBSTerminal {
         `;
 
         // Store the info for future reference
-        this.boardInfo.set(infoType, { value, status });
+        this.boardInfo.set(infoType.toLowerCase(), { value, status });
+
+        // Update upload button state
+        this.updateUploadButton();
+    }
+
+    updateUploadButton() {
+        const uploadBtn = document.getElementById('uploadBoardInfo');
+        const macAddressRow = this.boardInfo.get('bluetooth_mac_address');
+
+        console.log('Updating upload button. MAC address row:', macAddressRow);
+
+        // Enable upload button if we have MAC address and it's valid
+        const hasValidMac = macAddressRow &&
+            macAddressRow.status === 'success' &&
+            macAddressRow.value !== 'ERROR' &&
+            macAddressRow.value !== 'Pending...';
+
+        console.log('Has valid MAC:', hasValidMac);
+        uploadBtn.disabled = !hasValidMac;
+        console.log('Upload button disabled:', uploadBtn.disabled);
+    }
+
+    async uploadBoardInfo() {
+        console.log('Upload button clicked!');
+        const annotation = document.getElementById('annotationInput').value.trim();
+        const statusDiv = document.getElementById('uploadStatus');
+        const uploadBtn = document.getElementById('uploadBoardInfo');
+
+        console.log('Current board info:', this.boardInfo);
+
+        // Show status div
+        statusDiv.style.display = 'block';
+        statusDiv.innerHTML = '<small class="text-primary">Uploading...</small>';
+        uploadBtn.disabled = true;
+
+        try {
+            // Prepare board info data
+            const boardData = {};
+            this.boardInfo.forEach((info, type) => {
+                if (info.status === 'success' && info.value !== 'ERROR' && info.value !== 'Pending...') {
+                    boardData[type] = info.value;
+                }
+            });
+
+            console.log('Prepared board data:', boardData);
+
+            // Prepare upload payload
+            const uploadData = {
+                boardInfo: boardData,
+                annotation: annotation || '',
+                timestamp: new Date().toISOString()
+            };
+
+            console.log('Upload payload:', uploadData);
+
+            // Send to server
+            const response = await fetch('/api/upload-board-info', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(uploadData)
+            });
+
+            console.log('Response status:', response.status);
+            const result = await response.json();
+            console.log('Response data:', result);
+
+            if (response.ok) {
+                statusDiv.innerHTML = `<small class="text-success">✓ Uploaded: ${result.filename}</small>`;
+                // Clear annotation
+                document.getElementById('annotationInput').value = '';
+
+                this.terminal_println(`${colorize.success('[SUCCESS]')} Board info uploaded: ${result.filename}`);
+            } else {
+                throw new Error(result.error || 'Upload failed');
+            }
+        } catch (error) {
+            console.error('Upload error:', error);
+            statusDiv.innerHTML = `<small class="text-danger">✗ Error: ${error.message}</small>`;
+            this.terminal_println(`${colorize.error('[ERROR]')} Upload failed: ${error.message}`);
+            console.error('Upload error:', error);
+        } finally {
+            // Re-enable upload button after a delay
+            setTimeout(() => {
+                this.updateUploadButton();
+            }, 1000);
+        }
     }
 
     clearBoardInfoTable() {
@@ -584,6 +680,13 @@ class SerialCOBSTerminal {
         tableBody.innerHTML = '';
         this.boardInfo.clear();
         this.initializeBoardInfoTable();
+
+        // Update upload button state (will be disabled when board info is cleared)
+        this.updateUploadButton();
+
+        // Hide upload status
+        const statusDiv = document.getElementById('uploadStatus');
+        statusDiv.style.display = 'none';
     }
 
     initializeBoardInfoTable() {
@@ -591,42 +694,6 @@ class SerialCOBSTerminal {
         Object.keys(cbConstants.board_info_types).forEach(infoTypeName => {
             this.updateBoardInfoTable(infoTypeName, 'Pending...', 'secondary');
         });
-    }
-
-    updateBoardInfoTable(infoType, value, status) {
-        const tableBody = document.getElementById('boardInfoTableBody');
-        const rowId = `boardInfo-${infoType}`;
-        let row = document.getElementById(rowId);
-
-        if (!row) {
-            row = document.createElement('tr');
-            row.id = rowId;
-            tableBody.appendChild(row);
-        }
-
-        const statusClass = {
-            'success': 'text-success',
-            'danger': 'text-danger',
-            'secondary': 'text-muted'
-        }[status] || 'text-muted';
-
-        const statusIcon = {
-            'success': '✓',
-            'danger': '✗',
-            'secondary': '⏳'
-        }[status] || '⏳';
-
-        // Remove the BOARD_INFO_TTCB_ prefix for display
-        const displayName = infoType.replace('BOARD_INFO_TTCB_', '');
-
-        row.innerHTML = `
-            <td><small>${displayName}</small></td>
-            <td><code class="${statusClass}">${value}</code></td>
-            <td><span class="${statusClass}">${statusIcon}</span></td>
-        `;
-
-        // Store the info for future reference
-        this.boardInfo.set(infoType, { value, status });
     }
 
     clearBoardInfoTable() {
