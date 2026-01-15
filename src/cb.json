@@ -1,0 +1,47 @@
+{
+    "common_packet_ids": {
+        "PKTID_COMMON_RESERVED": 0,
+        "PKTID_COMMON_BEGIN": 16,
+        "PKTID_H2B_COMMON_GET_INFO": 17,
+        "PKTID_B2H_COMMON_GET_INFO_RSP": 18
+    },
+    "extended_packet_ids": {
+        "PKTID_CB2CM_STREAM": 48,
+        "PKTID_CB2CM_EVENT": 49,
+        "PKTID_CB2CM_RSP": 50
+    },
+    "common_response_codes": {
+        "PKT_RSP_OK": 0,
+        "PKT_RSP_ERR_INVALID_ARG": 1,
+        "PKT_RSP_ERR_INTERNAL": 2
+    },
+    "board_info_types": {
+        "BOARD_INFO_TTCB_BUILD_TARGET": 16,
+        "BOARD_INFO_TTCB_BUILD_CONFIGURATION": 17,
+        "BOARD_INFO_TTCB_BUILD_VERSION": 18,
+        "BOARD_INFO_TTCB_BUILD_HASH": 19,
+        "BOARD_INFO_TTCB_BUILT_AT": 20,
+        "BOARD_INFO_TTCB_BUILT_BY": 21,
+        "BOARD_INFO_TTCB_MCU_SERIAL_NUMBER": 22,
+        "BOARD_INFO_TTCB_MCU_MODEL": 23,
+        "BOARD_INFO_TTCB_BLUETOOTH_MAC_ADDRESS": 24,
+        "BOARD_INFO_TTCB_WIFI_MAC_ADDRESS": 25
+    },
+    "debug_controls": {
+        "DBG_ALL": 0,
+        "DBG_MOTOR_X_UPDATE_ADC": 1,
+        "DBG_MOTOR_Y_UPDATE_ADC": 2,
+        "DBG_MOTOR_T_UPDATE_IMU": 3,
+        "DBG_AVTCB_PLUGINS": 4,
+        "DBG_AVTCB_CANBUS_PKTS": 5,
+        "DBG_AVTCB_LOOP_LAPSE": 6,
+        "DBG_AVTCB_MEMORY": 7,
+        "DBG_MOTOR_F_UPDATE_ADC": 8,
+        "DBG_MOTOR_Z_UPDATE_ADC": 9,
+        "DBG_AVTHB_IMU_UPDATE": 10,
+        "DBG_AVTHB_CANBUS_PKTS": 11,
+        "DBG_AVTHB_LOOP_LAPSE": 12,
+        "DBG_AVTHB_MEMORY": 13,
+        "NUM_OF_DEBUG_CONTROLS": 14
+    }
+}

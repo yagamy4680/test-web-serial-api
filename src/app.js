@@ -1,6 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { CobsMsgpackCodec } from './cobs-msgpack-codec.js';
+import cbConstants from './cb.json' assert { type: 'json' };
 const sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 // Utility function to get formatted timestamp
@@ -86,10 +87,26 @@ class SerialCOBSTerminal {
             this.sendToSerial(chunk, false);
         });
         this.codec.attach_decoder_callback((id, argsArray) => {
+            this.stats.packetsDecoded++;
             console.log('Decoded arguments from codec:', id, argsArray);
             const jsonString = JSON.stringify({ id: id, args: argsArray });
-            this.terminal_println(`${colorize.success('[DECODED-ARG]')} ${jsonString}`);
-            this.terminal_println('');
+            this.response_terminal_println(`${colors.white('USB/CDC')} => ${jsonString}`);
+            if (id == cbConstants.common_packet_ids.PKTID_B2H_COMMON_GET_INFO_RSP) {
+                const rsp = argsArray[0];
+                const infoType = argsArray[1];
+                const infoValue = argsArray[2];
+                const infoTypeName = this.boardInfoTypeMap[infoType.toString()] || 'UNKNOWN';
+
+                if (rsp != cbConstants.common_response_codes.PKT_RSP_OK) {
+                    this.updateBoardInfoTable(infoTypeName, 'ERROR', 'danger');
+                    this.terminal_println(`${colors.red('Error:')} Board Info request failed for ${infoTypeName} with code ${rsp}`);
+                    return;
+                }
+
+                this.updateBoardInfoTable(infoTypeName, infoValue, 'success');
+                // this.terminal_println(`${colors.white('Board Info:')} ${colors.yellow(infoTypeName)} = ${colors.green(infoValue)}`);
+                return;
+            }
         });
 
         // Statistics
@@ -101,7 +118,7 @@ class SerialCOBSTerminal {
         };
 
         // Initialize terminal
-        this.terminal = new Terminal({
+        this.debugTerminal = new Terminal({
             fontSize: 16,
             // fontFamily: 'Courier New, monospace',
             theme: {
@@ -114,19 +131,47 @@ class SerialCOBSTerminal {
             scrollback: 10000
         });
 
+        // Initialize decoded arguments terminal
+        this.responseTerminal = new Terminal({
+            fontSize: 14,
+            theme: {
+                background: '#001122',
+                foreground: '#00ffaa',
+                cursor: '#00ff00',
+                selection: '#404040'
+            },
+            cursorBlink: false,
+            scrollback: 5000
+        });
+
         this.fitAddon = new FitAddon();
-        this.terminal.loadAddon(this.fitAddon);
+        this.responseFitAddon = new FitAddon();
+        this.debugTerminal.loadAddon(this.fitAddon);
+        this.responseTerminal.loadAddon(this.responseFitAddon);
+
+        this.boardInfoTypeMap = {};
+        for (let key in cbConstants.board_info_types) {
+            const value = cbConstants.board_info_types[key];
+            this.boardInfoTypeMap[value.toString()] = key;
+        }
+
+        // Initialize board info storage
+        this.boardInfo = new Map();
+        this.initializeBoardInfoTable();
 
         this.initializeUI();
     }
 
     initializeUI() {
-        // Mount terminal
-        this.terminal.open(document.getElementById('terminal'));
+        // Mount terminals
+        this.responseTerminal.open(document.getElementById('decodedTerminal'));
+        this.debugTerminal.open(document.getElementById('terminal'));
+        this.responseFitAddon.fit();
         this.fitAddon.fit();
 
-        // Resize terminal on window resize
+        // Resize terminals on window resize
         window.addEventListener('resize', () => {
+            this.responseFitAddon.fit();
             this.fitAddon.fit();
         });
 
@@ -134,17 +179,33 @@ class SerialCOBSTerminal {
         document.getElementById('connectBtn').addEventListener('click', () => this.connectToSerial());
         document.getElementById('disconnectBtn').addEventListener('click', () => this.disconnectFromSerial());
         document.getElementById('clearTerminal').addEventListener('click', () => this.clearTerminal());
+        document.getElementById('clearDecodedTerminal').addEventListener('click', () => this.clearResponseTerminal());
+        document.getElementById('clearBoardInfo').addEventListener('click', () => this.clearBoardInfoTable());
         document.getElementById('sendHexBtn').addEventListener('click', () => this.sendHexData());
         document.getElementById('sendJsonBtn').addEventListener('click', () => this.sendJsonData());
 
         // Enable/disable send buttons based on input
         document.getElementById('hexInput').addEventListener('input', () => this.updateSendButtons());
         document.getElementById('jsonInput').addEventListener('input', () => this.updateSendButtons());
+        
+        // Debug terminal visibility toggle
+        document.getElementById('showDebugTerminal').addEventListener('change', (e) => {
+            const debugCard = document.getElementById('debugTerminalCard');
+            debugCard.style.display = e.target.checked ? 'block' : 'none';
+            // Refit terminals when visibility changes
+            setTimeout(() => {
+                this.responseFitAddon.fit();
+                if (e.target.checked) this.fitAddon.fit();
+            }, 100);
+        });
 
         this.updateConnectionStatus('Disconnected', 'secondary');
         this.terminal_println(`${colorize.success('Serial Terminal Ready')}`);
         this.terminal_println(`Connect to a serial port to begin communication.`);
         this.terminal_println('');
+
+        // Initialize board info table
+        this.initializeBoardInfoTable();
     }
 
     async connectToSerial() {
@@ -178,6 +239,8 @@ class SerialCOBSTerminal {
             });
 
             this.updateConnectionStatus('Connected', 'success');
+            this.responseTerminal.clear();
+            this.debugTerminal.clear();
             this.terminal_println(`${colorize.success('[CONNECTED]')} Serial port opened at ${baudRate} baud`);
             this.terminal_println('');
 
@@ -192,10 +255,9 @@ class SerialCOBSTerminal {
             this.setupSerialEventListeners();
 
             // Start reading data
-            setTimeout(async() => this.startReading(), 10);
+            setTimeout(async () => this.startReading(), 10);
 
-            // await this.sendHexString('05 11 91 10 84 00'); // Example initial command
-            this.codec.push_arguments(0x11, [0x10]);
+            await this.fetchInfoFromDevice();
 
         } catch (error) {
             this.logError('Failed to connect: ' + error.message);
@@ -209,7 +271,7 @@ class SerialCOBSTerminal {
 
             if (this.reader) {
                 await this.reader.cancel();
-                await this.reader.releaseLock();
+                if (this.reader) { await this.reader.releaseLock(); }
                 this.reader = null;
             }
 
@@ -233,6 +295,25 @@ class SerialCOBSTerminal {
 
         } catch (error) {
             this.logError('Failed to disconnect: ' + error.message);
+            console.log(error);
+        }
+    }
+
+    async fetchInfoFromDevice() {
+        if (!this.port) return;
+        try {
+            // await this.sendHexString('05 11 91 10 84 00'); // Example initial command
+            let keys = Object.keys(cbConstants.board_info_types);
+            for (let i = 0; i < keys.length; i++) {
+                let key = keys[i];
+                let value = cbConstants.board_info_types[key];
+                this.codec.push_arguments(cbConstants.common_packet_ids.PKTID_H2B_COMMON_GET_INFO, [value]);
+                await sleep(100);
+            }
+        } catch (error) {
+            console.log(error);
+            this.logError('Failed to connect: ' + error.message);
+            this.updateConnectionStatus('Error', 'danger');
         }
     }
 
@@ -325,57 +406,11 @@ class SerialCOBSTerminal {
             byte.toString(16).padStart(2, '0').toUpperCase()
         ).join(' ');
 
-        this.terminal_println(`USB/CDC => ${colorize.info(hexString)}`);
+        this.terminal_println(`USB/CDC => ${colors.yellow(hexString)}`);
 
         // Feed data to uCOBS/MessagePack stream decoder
         this.codec.push_raw_bytes(data);
     }
-
-    // handleDecodedChunk(chunk, isEnd) {
-    //     if (chunk.length > 0) {
-    //         this.stats.packetsDecoded++;
-    //         this.updateStats();
-
-    //         // Display decoded hex
-    //         const hexString = Array.from(chunk).map(byte =>
-    //             byte.toString(16).padStart(2, '0').toUpperCase()
-    //         ).join(' ');
-    //         this.terminal.writeln(`${colorize.decoded('[DECODED]')} ${hexString}`);
-
-    //         if (chunk.length < 3) {
-    //             return this.terminal.writeln(`${colorize.warning('[RAW]')} Packet too short to process: ${hexString}`);
-    //         }
-
-    //         let packet_id = chunk[0];
-    //         let checksum = chunk[chunk.length - 1];
-    //         let payload = chunk.slice(1, chunk.length - 1);
-    //         console.log('Processing packet ID:', packet_id, 'Checksum:', checksum, 'Payload:', payload);
-    //         if (checksum != crc8(payload)) {
-    //             return this.terminal.writeln(`${colorize.error('[ERROR]')} Checksum mismatch for packet ID ${packet_id}: expected ${crc8(payload).toString(16).toUpperCase().padStart(2, '0')}, got ${checksum.toString(16).toUpperCase().padStart(2, '0')}`);
-    //         }
-
-    //         // Try to decode as MessagePack
-    //         this.decodeMessagePack(payload);
-    //     }
-    // }
-
-    // decodeMessagePack(data) {
-    //     try {
-    //         const decoded = unpack(data);
-    //         const jsonString = JSON.stringify(decoded);
-    //         this.terminal.writeln(`${colorize.success('[JSON]')} ${jsonString}`);
-    //     } catch (error) {
-    //         // Not valid MessagePack, display as raw data
-    //         this.terminal.writeln(`${colorize.warning('[RAW]')} Not MessagePack data`);
-    //     }
-    //     this.terminal.writeln('');
-    // }
-
-    // async sendHexString(hexString) {
-    //     const hexBytes = hexString.split(/\s+/).map(hex => parseInt(hex, 16));
-    //     const data = new Uint8Array(hexBytes);
-    //     await this.sendToSerial(data);
-    // }
 
     async sendHexData() {
         const hexInput = document.getElementById('hexInput').value.trim();
@@ -428,30 +463,6 @@ class SerialCOBSTerminal {
         }
     }
 
-    // async sendRawData(data) {
-    //     if (!this.writer) return;
-
-    //     // Create a new uCOBS encoder for this data packet
-    //     const [push, end] = createStreamEncoder(
-    //         (chunk, isEnd) => this.sendToSerial(chunk, isEnd),
-    //         (error) => this.logError(`uCOBS encode error: ${error.message}`)
-    //     );
-
-    //     // Encode with uCOBS and send
-    //     push(data);
-    //     end(); // Signal end of this data packet
-
-    //     this.stats.bytesSent += data.length;
-    //     this.stats.packetsSent++;
-    //     this.updateStats();
-
-    //     // Display what we're sending
-    //     const hexString = Array.from(data).map(byte =>
-    //         byte.toString(16).padStart(2, '0').toUpperCase()
-    //     ).join(' ');
-    //     this.terminal.writeln(`${colorize.tx('[TX]')} ${hexString}`);
-    // }
-
     async sendToSerial(chunk, isEnd) {
         if (this.writer && chunk.length > 0) {
             let buffer = new Uint8Array(chunk);
@@ -494,16 +505,127 @@ class SerialCOBSTerminal {
     // Centralized terminal output with timestamp
     terminal_println(message) {
         if (message === '') {
-            this.terminal.writeln('');
+            this.debugTerminal.writeln('');
         } else {
-            this.terminal.writeln(`[${getTimestamp()}] ${message}`);
+            this.debugTerminal.writeln(`[${getTimestamp()}] ${message}`);
+        }
+    }
+
+    // Centralized decoded terminal output with timestamp
+    response_terminal_println(message) {
+        if (message === '') {
+            this.responseTerminal.writeln('');
+        } else {
+            this.responseTerminal.writeln(`[${getTimestamp()}] ${message}`);
         }
     }
 
     clearTerminal() {
-        this.terminal.clear();
+        this.debugTerminal.clear();
         this.terminal_println(`${colorize.success('Terminal cleared')}`);
         this.terminal_println('');
+    }
+
+    clearResponseTerminal() {
+        this.responseTerminal.clear();
+        this.response_terminal_println(`${colorize.success('Response terminal cleared')}`);
+    }
+
+    initializeBoardInfoTable() {
+        // Pre-populate table with all board info types
+        Object.keys(cbConstants.board_info_types).forEach(infoTypeName => {
+            this.updateBoardInfoTable(infoTypeName, 'Pending...', 'secondary');
+        });
+    }
+
+    updateBoardInfoTable(infoType, value, status) {
+        const tableBody = document.getElementById('boardInfoTableBody');
+        const rowId = `boardInfo-${infoType}`;
+        let row = document.getElementById(rowId);
+
+        if (!row) {
+            row = document.createElement('tr');
+            row.id = rowId;
+            tableBody.appendChild(row);
+        }
+
+        const statusClass = {
+            'success': 'text-success',
+            'danger': 'text-danger',
+            'secondary': 'text-muted'
+        }[status] || 'text-muted';
+
+        const statusIcon = {
+            'success': '✓',
+            'danger': '✗',
+            'secondary': '⏳'
+        }[status] || '⏳';
+
+        row.innerHTML = `
+            <td><small>${infoType}</small></td>
+            <td><code class="${statusClass}">${value}</code></td>
+            <td><span class="${statusClass}">${statusIcon}</span></td>
+        `;
+
+        // Store the info for future reference
+        this.boardInfo.set(infoType, { value, status });
+    }
+
+    clearBoardInfoTable() {
+        const tableBody = document.getElementById('boardInfoTableBody');
+        tableBody.innerHTML = '';
+        this.boardInfo.clear();
+        this.initializeBoardInfoTable();
+    }
+
+    initializeBoardInfoTable() {
+        // Pre-populate table with all board info types
+        Object.keys(cbConstants.board_info_types).forEach(infoTypeName => {
+            this.updateBoardInfoTable(infoTypeName, 'Pending...', 'secondary');
+        });
+    }
+
+    updateBoardInfoTable(infoType, value, status) {
+        const tableBody = document.getElementById('boardInfoTableBody');
+        const rowId = `boardInfo-${infoType}`;
+        let row = document.getElementById(rowId);
+
+        if (!row) {
+            row = document.createElement('tr');
+            row.id = rowId;
+            tableBody.appendChild(row);
+        }
+
+        const statusClass = {
+            'success': 'text-success',
+            'danger': 'text-danger',
+            'secondary': 'text-muted'
+        }[status] || 'text-muted';
+
+        const statusIcon = {
+            'success': '✓',
+            'danger': '✗',
+            'secondary': '⏳'
+        }[status] || '⏳';
+
+        // Remove the BOARD_INFO_TTCB_ prefix for display
+        const displayName = infoType.replace('BOARD_INFO_TTCB_', '');
+
+        row.innerHTML = `
+            <td><small>${displayName}</small></td>
+            <td><code class="${statusClass}">${value}</code></td>
+            <td><span class="${statusClass}">${statusIcon}</span></td>
+        `;
+
+        // Store the info for future reference
+        this.boardInfo.set(infoType, { value, status });
+    }
+
+    clearBoardInfoTable() {
+        const tableBody = document.getElementById('boardInfoTableBody');
+        tableBody.innerHTML = '';
+        this.boardInfo.clear();
+        this.initializeBoardInfoTable();
     }
 
     logError(message) {
