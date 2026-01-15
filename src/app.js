@@ -1,15 +1,23 @@
-import { createStreamEncoder, createStreamDecoder } from 'ucobs';
-import { pack, unpack } from 'msgpackr';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import crc8 from 'crc/crc8';
+import { CobsMsgpackCodec } from './cobs-msgpack-codec.js';
 const sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+// Utility function to get formatted timestamp
+const getTimestamp = () => {
+    const now = new Date();
+    const hours = now.getHours().toString().padStart(2, '0');
+    const minutes = now.getMinutes().toString().padStart(2, '0');
+    const seconds = now.getSeconds().toString().padStart(2, '0');
+    const milliseconds = now.getMilliseconds().toString().padStart(3, '0');
+    return `${hours}:${minutes}:${seconds}.${milliseconds}`;
+};
 
 // Browser-compatible color utility inspired by yoctocolors
 const colors = {
     // Reset
     reset: '\x1b[0m',
-    
+
     // Basic colors
     black: (text) => `\x1b[30m${text}\x1b[0m`,
     red: (text) => `\x1b[31m${text}\x1b[0m`,
@@ -21,7 +29,7 @@ const colors = {
     white: (text) => `\x1b[37m${text}\x1b[0m`,
     gray: (text) => `\x1b[90m${text}\x1b[0m`,
     grey: (text) => `\x1b[90m${text}\x1b[0m`,
-    
+
     // Bright colors
     blackBright: (text) => `\x1b[90m${text}\x1b[0m`,
     redBright: (text) => `\x1b[91m${text}\x1b[0m`,
@@ -31,7 +39,7 @@ const colors = {
     magentaBright: (text) => `\x1b[95m${text}\x1b[0m`,
     cyanBright: (text) => `\x1b[96m${text}\x1b[0m`,
     whiteBright: (text) => `\x1b[97m${text}\x1b[0m`,
-    
+
     // Background colors
     bgBlack: (text) => `\x1b[40m${text}\x1b[0m`,
     bgRed: (text) => `\x1b[41m${text}\x1b[0m`,
@@ -41,7 +49,7 @@ const colors = {
     bgMagenta: (text) => `\x1b[45m${text}\x1b[0m`,
     bgCyan: (text) => `\x1b[46m${text}\x1b[0m`,
     bgWhite: (text) => `\x1b[47m${text}\x1b[0m`,
-    
+
     // Modifiers
     bold: (text) => `\x1b[1m${text}\x1b[22m`,
     dim: (text) => `\x1b[2m${text}\x1b[22m`,
@@ -72,7 +80,18 @@ class SerialCOBSTerminal {
         this.reader = null;
         this.writer = null;
         this.isReading = false;
-        
+        this.codec = new CobsMsgpackCodec();
+        this.codec.attach_encoder_callback((chunk) => {
+            console.log('Encoded chunk from codec:', chunk);
+            this.sendToSerial(chunk, false);
+        });
+        this.codec.attach_decoder_callback((id, argsArray) => {
+            console.log('Decoded arguments from codec:', id, argsArray);
+            const jsonString = JSON.stringify({ id: id, args: argsArray });
+            this.terminal_println(`${colorize.success('[DECODED-ARG]')} ${jsonString}`);
+            this.terminal_println('');
+        });
+
         // Statistics
         this.stats = {
             bytesReceived: 0,
@@ -80,11 +99,11 @@ class SerialCOBSTerminal {
             packetsDecoded: 0,
             packetsSent: 0
         };
-        
+
         // Initialize terminal
         this.terminal = new Terminal({
-            fontSize: 15,
-            fontFamily: 'Courier New, monospace',
+            fontSize: 16,
+            // fontFamily: 'Courier New, monospace',
             theme: {
                 background: '#000000',
                 foreground: '#ffffff',
@@ -94,16 +113,10 @@ class SerialCOBSTerminal {
             cursorBlink: true,
             scrollback: 10000
         });
-        
+
         this.fitAddon = new FitAddon();
         this.terminal.loadAddon(this.fitAddon);
-        
-        // uCOBS stream decoder for incoming data
-        this.streamDecoder = createStreamDecoder(
-            (chunk, isEnd) => this.handleDecodedChunk(chunk, isEnd),
-            (error) => this.logError(`uCOBS decode error: ${error.message}`)
-        );
-        
+
         this.initializeUI();
     }
 
@@ -111,34 +124,34 @@ class SerialCOBSTerminal {
         // Mount terminal
         this.terminal.open(document.getElementById('terminal'));
         this.fitAddon.fit();
-        
+
         // Resize terminal on window resize
         window.addEventListener('resize', () => {
             this.fitAddon.fit();
         });
-        
+
         // Event listeners
         document.getElementById('connectBtn').addEventListener('click', () => this.connectToSerial());
         document.getElementById('disconnectBtn').addEventListener('click', () => this.disconnectFromSerial());
         document.getElementById('clearTerminal').addEventListener('click', () => this.clearTerminal());
         document.getElementById('sendHexBtn').addEventListener('click', () => this.sendHexData());
         document.getElementById('sendJsonBtn').addEventListener('click', () => this.sendJsonData());
-        
+
         // Enable/disable send buttons based on input
         document.getElementById('hexInput').addEventListener('input', () => this.updateSendButtons());
         document.getElementById('jsonInput').addEventListener('input', () => this.updateSendButtons());
-        
+
         this.updateConnectionStatus('Disconnected', 'secondary');
-        this.terminal.writeln(colorize.greenBright('Serial Terminal Ready'));
-        this.terminal.writeln('Connect to a serial port to begin communication.');
-        this.terminal.writeln('');
+        this.terminal_println(`${colorize.success('Serial Terminal Ready')}`);
+        this.terminal_println(`Connect to a serial port to begin communication.`);
+        this.terminal_println('');
     }
 
     async connectToSerial() {
         try {
             // Check if CB1e filter is enabled
             const cb1eFilter = document.getElementById('cb1eFilter').checked;
-            
+
             let requestOptions = {};
             if (cb1eFilter) {
                 // Filter for CB1e USB devices (vendor ID 0x303a)
@@ -148,12 +161,13 @@ class SerialCOBSTerminal {
                     }]
                 };
             }
-            
+
             // Request a port and open a connection
             this.port = await navigator.serial.requestPort(requestOptions);
-            
+            window.serial_port = this.port; // For debugging
+
             const baudRate = parseInt(document.getElementById('baudRate').value);
-            
+
             // Open the serial port with user-selected baud rate
             await this.port.open({
                 baudRate: baudRate,
@@ -164,9 +178,9 @@ class SerialCOBSTerminal {
             });
 
             this.updateConnectionStatus('Connected', 'success');
-            this.terminal.writeln(`${colorize.success('[CONNECTED]')} Serial port opened at ${baudRate} baud`);
-            this.terminal.writeln('');
-            
+            this.terminal_println(`${colorize.success('[CONNECTED]')} Serial port opened at ${baudRate} baud`);
+            this.terminal_println('');
+
             document.getElementById('connectBtn').disabled = true;
             document.getElementById('disconnectBtn').disabled = false;
             this.updateSendButtons();
@@ -178,9 +192,10 @@ class SerialCOBSTerminal {
             this.setupSerialEventListeners();
 
             // Start reading data
-            this.startReading();
+            setTimeout(async() => this.startReading(), 10);
 
-            await this.sendHexString('05 11 91 10 84 00'); // Example initial command
+            // await this.sendHexString('05 11 91 10 84 00'); // Example initial command
+            this.codec.push_arguments(0x11, [0x10]);
 
         } catch (error) {
             this.logError('Failed to connect: ' + error.message);
@@ -191,27 +206,27 @@ class SerialCOBSTerminal {
     async disconnectFromSerial() {
         try {
             this.isReading = false;
-            
+
             if (this.reader) {
                 await this.reader.cancel();
                 await this.reader.releaseLock();
                 this.reader = null;
             }
-            
+
             if (this.writer) {
                 await this.writer.releaseLock();
                 this.writer = null;
             }
-            
+
             if (this.port) {
                 await this.port.close();
                 this.port = null;
             }
 
             this.updateConnectionStatus('Disconnected', 'secondary');
-            this.terminal.writeln(`${colorize.error('[DISCONNECTED]')} Serial port closed`);
-            this.terminal.writeln('');
-            
+            this.terminal_println(`${colorize.error('[DISCONNECTED]')} Serial port closed`);
+            this.terminal_println('');
+
             document.getElementById('connectBtn').disabled = false;
             document.getElementById('disconnectBtn').disabled = true;
             this.updateSendButtons();
@@ -223,25 +238,25 @@ class SerialCOBSTerminal {
 
     setupSerialEventListeners() {
         if (!this.port) return;
-        
+
         // Listen for connect events
         this.port.addEventListener('connect', () => {
-            this.terminal.writeln(`${colorize.success('[DEVICE CONNECTED]')} Serial device reconnected`);
-            this.terminal.writeln('');
+            this.terminal_println(`${colorize.success('[DEVICE CONNECTED]')} Serial device reconnected`);
+            this.terminal_println('');
             this.updateConnectionStatus('Connected', 'success');
-            
+
             // Re-enable functionality
             document.getElementById('connectBtn').disabled = true;
             document.getElementById('disconnectBtn').disabled = false;
             this.updateSendButtons();
         });
-        
+
         // Listen for disconnect events  
         this.port.addEventListener('disconnect', () => {
-            this.terminal.writeln(`${colorize.warning('[DEVICE DISCONNECTED]')} Serial device unplugged or connection lost`);
-            this.terminal.writeln('');
+            this.terminal_println(`${colorize.warning('[DEVICE DISCONNECTED]')} Serial device unplugged or connection lost`);
+            this.terminal_println('');
             this.updateConnectionStatus('Disconnected', 'warning');
-            
+
             // Clean up and disable functionality
             this.handleUnexpectedDisconnect();
         });
@@ -250,33 +265,33 @@ class SerialCOBSTerminal {
     handleUnexpectedDisconnect() {
         // Stop reading if still active
         this.isReading = false;
-        
+
         // Clean up resources
         if (this.reader) {
-            this.reader.releaseLock().catch(() => {});
+            this.reader.releaseLock().catch(() => { });
             this.reader = null;
         }
-        
+
         if (this.writer) {
-            this.writer.releaseLock().catch(() => {});
+            this.writer.releaseLock().catch(() => { });
             this.writer = null;
         }
-        
+
         // Update UI state
         document.getElementById('connectBtn').disabled = false;
         document.getElementById('disconnectBtn').disabled = true;
         this.updateSendButtons();
-        
+
         // Reset port reference
         this.port = null;
-        
-        this.terminal.writeln(`${colorize.info('[INFO]')} Click 'Connect' to establish a new connection`);
-        this.terminal.writeln('');
+
+        this.terminal_println(`${colorize.info('[INFO]')} Click 'Connect' to establish a new connection`);
+        this.terminal_println('');
     }
 
     async startReading() {
         if (!this.port) return;
-        
+
         this.isReading = true;
         this.reader = this.port.readable.getReader();
 
@@ -284,7 +299,7 @@ class SerialCOBSTerminal {
             while (this.isReading) {
                 const { value, done } = await this.reader.read();
                 if (done) break;
-                
+
                 if (value) {
                     this.processIncomingData(value);
                 }
@@ -304,68 +319,68 @@ class SerialCOBSTerminal {
     processIncomingData(data) {
         this.stats.bytesReceived += data.length;
         this.updateStats();
-        
+
         // Display raw hex data
-        const hexString = Array.from(data).map(byte => 
+        const hexString = Array.from(data).map(byte =>
             byte.toString(16).padStart(2, '0').toUpperCase()
         ).join(' ');
-        
-        this.terminal.writeln(`${colorize.info('[RX]')} ${hexString}`);
-        
-        // Feed data to uCOBS stream decoder
-        this.streamDecoder(data);
+
+        this.terminal_println(`USB/CDC => ${colorize.info(hexString)}`);
+
+        // Feed data to uCOBS/MessagePack stream decoder
+        this.codec.push_raw_bytes(data);
     }
 
-    handleDecodedChunk(chunk, isEnd) {
-        if (chunk.length > 0) {
-            this.stats.packetsDecoded++;
-            this.updateStats();
-            
-            // Display decoded hex
-            const hexString = Array.from(chunk).map(byte => 
-                byte.toString(16).padStart(2, '0').toUpperCase()
-            ).join(' ');
-            this.terminal.writeln(`${colorize.decoded('[DECODED]')} ${hexString}`);
+    // handleDecodedChunk(chunk, isEnd) {
+    //     if (chunk.length > 0) {
+    //         this.stats.packetsDecoded++;
+    //         this.updateStats();
 
-            if (chunk.length < 3) {
-                return this.terminal.writeln(`${colorize.warning('[RAW]')} Packet too short to process: ${hexString}`);
-            }
+    //         // Display decoded hex
+    //         const hexString = Array.from(chunk).map(byte =>
+    //             byte.toString(16).padStart(2, '0').toUpperCase()
+    //         ).join(' ');
+    //         this.terminal.writeln(`${colorize.decoded('[DECODED]')} ${hexString}`);
 
-            let packet_id = chunk[0];
-            let checksum = chunk[chunk.length - 1];
-            let payload = chunk.slice(1, chunk.length - 1);
-            console.log('Processing packet ID:', packet_id, 'Checksum:', checksum, 'Payload:', payload);
-            if (checksum != crc8(payload)) {
-                return this.terminal.writeln(`${colorize.error('[ERROR]')} Checksum mismatch for packet ID ${packet_id}: expected ${crc8(payload).toString(16).toUpperCase().padStart(2,'0')}, got ${checksum.toString(16).toUpperCase().padStart(2,'0')}`);
-            }
-            
-            // Try to decode as MessagePack
-            this.decodeMessagePack(payload);
-        }
-    }
+    //         if (chunk.length < 3) {
+    //             return this.terminal.writeln(`${colorize.warning('[RAW]')} Packet too short to process: ${hexString}`);
+    //         }
 
-    decodeMessagePack(data) {
-        try {
-            const decoded = unpack(data);
-            const jsonString = JSON.stringify(decoded);
-            this.terminal.writeln(`${colorize.success('[JSON]')} ${jsonString}`);
-        } catch (error) {
-            // Not valid MessagePack, display as raw data
-            this.terminal.writeln(`${colorize.warning('[RAW]')} Not MessagePack data`);
-        }
-        this.terminal.writeln('');
-    }
+    //         let packet_id = chunk[0];
+    //         let checksum = chunk[chunk.length - 1];
+    //         let payload = chunk.slice(1, chunk.length - 1);
+    //         console.log('Processing packet ID:', packet_id, 'Checksum:', checksum, 'Payload:', payload);
+    //         if (checksum != crc8(payload)) {
+    //             return this.terminal.writeln(`${colorize.error('[ERROR]')} Checksum mismatch for packet ID ${packet_id}: expected ${crc8(payload).toString(16).toUpperCase().padStart(2, '0')}, got ${checksum.toString(16).toUpperCase().padStart(2, '0')}`);
+    //         }
 
-    async sendHexString(hexString) {
-        const hexBytes = hexString.split(/\s+/).map(hex => parseInt(hex, 16));
-        const data = new Uint8Array(hexBytes);
-        await this.sendEncodedChunk(data);
-    }
+    //         // Try to decode as MessagePack
+    //         this.decodeMessagePack(payload);
+    //     }
+    // }
+
+    // decodeMessagePack(data) {
+    //     try {
+    //         const decoded = unpack(data);
+    //         const jsonString = JSON.stringify(decoded);
+    //         this.terminal.writeln(`${colorize.success('[JSON]')} ${jsonString}`);
+    //     } catch (error) {
+    //         // Not valid MessagePack, display as raw data
+    //         this.terminal.writeln(`${colorize.warning('[RAW]')} Not MessagePack data`);
+    //     }
+    //     this.terminal.writeln('');
+    // }
+
+    // async sendHexString(hexString) {
+    //     const hexBytes = hexString.split(/\s+/).map(hex => parseInt(hex, 16));
+    //     const data = new Uint8Array(hexBytes);
+    //     await this.sendToSerial(data);
+    // }
 
     async sendHexData() {
         const hexInput = document.getElementById('hexInput').value.trim();
         if (!hexInput || !this.writer) return;
-        
+
         try {
             // Parse hex string
             console.log('Hex input to parse:', hexInput);
@@ -382,12 +397,12 @@ class SerialCOBSTerminal {
             const data = new Uint8Array(hexBytes);
             console.log('Uint8Array data to send:', data);
             // await this.sendRawData(data);
-            await this.sendEncodedChunk(data, true);
-            
+            await this.sendToSerial(data, true);
+
             // Clear input
             document.getElementById('hexInput').value = '';
             this.updateSendButtons();
-            
+
         } catch (error) {
             this.logError('Failed to send hex data: ' + error.message);
         }
@@ -396,58 +411,61 @@ class SerialCOBSTerminal {
     async sendJsonData() {
         const jsonInput = document.getElementById('jsonInput').value.trim();
         if (!jsonInput || !this.writer) return;
-        
+
         try {
             // Parse and pack JSON as MessagePack
             const jsonData = JSON.parse(jsonInput);
             const packedData = pack(jsonData);
-            
+
             await this.sendRawData(packedData);
-            
+
             // Clear input
             document.getElementById('jsonInput').value = '';
             this.updateSendButtons();
-            
+
         } catch (error) {
             this.logError('Failed to send JSON data: ' + error.message);
         }
     }
 
-    async sendRawData(data) {
-        if (!this.writer) return;
-        
-        // Create a new uCOBS encoder for this data packet
-        const [push, end] = createStreamEncoder(
-            (chunk, isEnd) => this.sendEncodedChunk(chunk, isEnd),
-            (error) => this.logError(`uCOBS encode error: ${error.message}`)
-        );
-        
-        // Encode with uCOBS and send
-        push(data);
-        end(); // Signal end of this data packet
-        
-        this.stats.bytesSent += data.length;
-        this.stats.packetsSent++;
-        this.updateStats();
-        
-        // Display what we're sending
-        const hexString = Array.from(data).map(byte => 
-            byte.toString(16).padStart(2, '0').toUpperCase()
-        ).join(' ');
-        this.terminal.writeln(`${colorize.tx('[TX]')} ${hexString}`);
-    }
+    // async sendRawData(data) {
+    //     if (!this.writer) return;
 
-    async sendEncodedChunk(chunk, isEnd) {
+    //     // Create a new uCOBS encoder for this data packet
+    //     const [push, end] = createStreamEncoder(
+    //         (chunk, isEnd) => this.sendToSerial(chunk, isEnd),
+    //         (error) => this.logError(`uCOBS encode error: ${error.message}`)
+    //     );
+
+    //     // Encode with uCOBS and send
+    //     push(data);
+    //     end(); // Signal end of this data packet
+
+    //     this.stats.bytesSent += data.length;
+    //     this.stats.packetsSent++;
+    //     this.updateStats();
+
+    //     // Display what we're sending
+    //     const hexString = Array.from(data).map(byte =>
+    //         byte.toString(16).padStart(2, '0').toUpperCase()
+    //     ).join(' ');
+    //     this.terminal.writeln(`${colorize.tx('[TX]')} ${hexString}`);
+    // }
+
+    async sendToSerial(chunk, isEnd) {
         if (this.writer && chunk.length > 0) {
             let buffer = new Uint8Array(chunk);
             console.log('Sending encoded chunk:', chunk, buffer);
             await this.writer.write(buffer);
-            
+
+            this.stats.bytesSent += chunk.length;
+            this.stats.packetsSent++;
+
             // Show encoded data being sent
-            const hexString = Array.from(chunk).map(byte => 
+            const hexString = Array.from(chunk).map(byte =>
                 byte.toString(16).padStart(2, '0').toUpperCase()
             ).join(' ');
-            this.terminal.writeln(`${colorize.muted('[TX-ENC]')} ${hexString}`);
+            this.terminal_println(`USB/CDC <= ${colorize.tx(hexString)}`);
         }
     }
 
@@ -455,7 +473,7 @@ class SerialCOBSTerminal {
         const isConnected = this.port !== null;
         const hasHexInput = document.getElementById('hexInput').value.trim().length > 0;
         const hasJsonInput = document.getElementById('jsonInput').value.trim().length > 0;
-        
+
         document.getElementById('sendHexBtn').disabled = !isConnected || !hasHexInput;
         document.getElementById('sendJsonBtn').disabled = !isConnected || !hasJsonInput;
     }
@@ -473,15 +491,24 @@ class SerialCOBSTerminal {
         document.getElementById('packetsSent').textContent = this.stats.packetsSent;
     }
 
+    // Centralized terminal output with timestamp
+    terminal_println(message) {
+        if (message === '') {
+            this.terminal.writeln('');
+        } else {
+            this.terminal.writeln(`[${getTimestamp()}] ${message}`);
+        }
+    }
+
     clearTerminal() {
         this.terminal.clear();
-        this.terminal.writeln(colorize.success('Terminal cleared'));
-        this.terminal.writeln('');
+        this.terminal_println(`${colorize.success('Terminal cleared')}`);
+        this.terminal_println('');
     }
 
     logError(message) {
-        this.terminal.writeln(`${colorize.error('[ERROR]')} ${message}`);
-        this.terminal.writeln('');
+        this.terminal_println(`${colorize.error('[ERROR]')} ${message}`);
+        this.terminal_println('');
     }
 }
 
