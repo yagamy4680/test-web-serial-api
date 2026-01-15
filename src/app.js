@@ -365,12 +365,20 @@ class SerialCOBSTerminal {
 
         // Clean up resources
         if (this.reader) {
-            this.reader.releaseLock().catch(() => { });
+            try {
+                this.reader.releaseLock();
+            } catch (error) {
+                console.log('Error releasing reader lock after disconnect:', e);
+            }
             this.reader = null;
         }
 
         if (this.writer) {
-            this.writer.releaseLock().catch(() => { });
+            try {
+                this.writer.releaseLock();
+            } catch (error) {
+                console.log('Error releasing writer lock after disconnect:', e);
+            }
             this.writer = null;
         }
 
@@ -381,6 +389,12 @@ class SerialCOBSTerminal {
 
         // Reset port reference
         this.port = null;
+
+        // Clear status when disconnected
+        this.status.freeHeapSize = null;
+        this.status.uptime = null;
+        this.status.lastHeartbeat = null;
+        this.updateStatusDisplay();
 
         this.terminal_println(`${colorize.info('[INFO]')} Click 'Connect' to establish a new connection`);
         this.terminal_println('');
@@ -574,9 +588,9 @@ class SerialCOBSTerminal {
         const hours = now.getHours().toString().padStart(2, '0');
         const minutes = now.getMinutes().toString().padStart(2, '0');
         const seconds = now.getSeconds().toString().padStart(2, '0');
-        
+
         const timeString = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-        
+
         // Update all current time displays
         const timeElements = document.querySelectorAll('.current-time');
         timeElements.forEach(element => {
