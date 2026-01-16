@@ -325,6 +325,9 @@ class SerialCOBSTerminal {
             this.status.lastHeartbeat = null;
             this.updateStatusDisplay();
 
+            // Reset NVS configuration state
+            this.resetNvsConfigurationState();
+
         } catch (error) {
             this.logError('Failed to disconnect: ' + error.message);
             console.log(error);
@@ -416,6 +419,9 @@ class SerialCOBSTerminal {
         this.status.uptime = null;
         this.status.lastHeartbeat = null;
         this.updateStatusDisplay();
+
+        // Reset NVS configuration state
+        this.resetNvsConfigurationState();
 
         this.terminal_println(`${colorize.info('[INFO]')} Click 'Connect' to establish a new connection`);
         this.terminal_println('');
@@ -1101,6 +1107,19 @@ class SerialCOBSTerminal {
 
         // Disable write button when configuration matches original
         writeButton.disabled = true;
+    }
+
+    resetNvsConfigurationState() {
+        // Reset dropdown to unknown
+        const peripheralSelect = document.getElementById('peripheralConfig');
+        peripheralSelect.value = '-1';
+        
+        // Reset original config tracking
+        this.originalPeripheralConfig = null;
+        
+        // Disable both Write and Reset buttons
+        document.getElementById('writeNvsConfig').disabled = true;
+        document.getElementById('resetDevice').disabled = true;
     }
 
 }
