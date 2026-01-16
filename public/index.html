@@ -238,6 +238,32 @@
                     </div>
                 </div>
                 
+                <!-- NVS Configurations Panel -->
+                <div class="card mt-3">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">NVS Configurations</h6>
+                        <small class="text-muted current-time" id="currentTime7">--:--:--</small>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="peripheralConfig" class="form-label">Peripheral Configuration:</label>
+                            <select id="peripheralConfig" class="form-select">
+                                <option value="-1">-- Unknown --</option>
+                                <option value="0">2 motors and 1 ultrasonic</option>
+                                <option value="1">3 motors</option>
+                            </select>
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button id="writeNvsConfig" class="btn btn-primary btn-sm" disabled>
+                                <i class="bi bi-pencil"></i> Write
+                            </button>
+                            <button id="resetDevice" class="btn btn-warning btn-sm" disabled>
+                                <i class="bi bi-arrow-clockwise"></i> Reset to Take Effect
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Send Data Panel (Hidden by default) -->
                 <div class="card mt-3" id="sendDataCard" style="display: none;">
                     <div class="card-header d-flex justify-content-between align-items-center">

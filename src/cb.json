@@ -8,7 +8,8 @@
         "PKTID_B2H_COMMON_GET_ATTRIBUTE_RSP": 20,
         "PKTID_H2B_COMMON_SET_ATTRIBUTE": 21,
         "PKTID_B2H_COMMON_SET_ATTRIBUTE_RSP": 22,
-        "PKTID_HEARTBEAT": 23
+        "PKTID_HEARTBEAT": 23,
+        "PKTID_H2B_COMMON_PERFORM_ACTION": 24
     },
     "extended_packet_ids": {
         "PKTID_CB2CM_STREAM": 48,
@@ -39,8 +40,16 @@
         "BOARD_ATTR_TTCB_BOOTING_COUNT": 129,
         "BOARD_ATTR_TTCB_PERIPHERAL_CONFIG": 130
     },
+    "board_action_types": {
+        "BOARD_ACTION_TTCB_COMMON_BASE": 16,
+        "BOARD_ACTION_TTCB_COMMON_RESTART": 16
+    },
     "common_constants": {
         "MAX_HEARTBEAT_INTERVAL_MS": 500
+    },
+    "extended_constants": {
+        "CB1E_PERIPHERAL_CONFIG_EXT_2_MOTORS": 0,
+        "CB1E_PERIPHERAL_CONFIG_EXT_3_MOTORS": 1
     },
     "debug_controls": {
         "DBG_ALL": 0,
