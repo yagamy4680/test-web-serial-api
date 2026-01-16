@@ -101,6 +101,7 @@ class SerialCOBSTerminal {
         };
 
         this.peripheral_configs = [0, 0, 0, 0];
+        this.originalPeripheralConfig = null; // Track original value from device
         this.heartbeatTimer = setInterval(async () => await this.onHeartbeatTmeout(), cbConstants.common_constants.MAX_HEARTBEAT_INTERVAL_MS);
         this.sensorTimer = setInterval(async () => await this.onSensorTimeout(), 1000);
         this.statusUpdateTimer = setInterval(() => this.updateStatusDisplay(), 1000); // Update status every second
@@ -152,11 +153,11 @@ class SerialCOBSTerminal {
         // Initialize board info storage
         this.boardInfo = new Map();
         this.initializeBoardInfoTable();
-        
+
         // NVS Configuration constants
         this.CB1E_PERIPHERAL_CONFIG_EXT_2_MOTORS = cbConstants.extended_constants.CB1E_PERIPHERAL_CONFIG_EXT_2_MOTORS;
         this.CB1E_PERIPHERAL_CONFIG_EXT_3_MOTORS = cbConstants.extended_constants.CB1E_PERIPHERAL_CONFIG_EXT_3_MOTORS;
-        
+
         this.initializeUI();
     }
 
@@ -184,6 +185,7 @@ class SerialCOBSTerminal {
         document.getElementById('sendJsonBtn').addEventListener('click', () => this.sendJsonData());
         document.getElementById('writeNvsConfig').addEventListener('click', () => this.writeNvsConfig());
         document.getElementById('resetDevice').addEventListener('click', () => this.resetDevice());
+        document.getElementById('peripheralConfig').addEventListener('change', () => this.onPeripheralConfigChange());
 
         // Enable/disable send buttons based on input
         document.getElementById('hexInput').addEventListener('input', () => this.updateSendButtons());
@@ -536,7 +538,7 @@ class SerialCOBSTerminal {
 
         document.getElementById('sendHexBtn').disabled = !isConnected || !hasHexInput;
         document.getElementById('sendJsonBtn').disabled = !isConnected || !hasJsonInput;
-        
+
         // Update NVS configuration buttons
         this.updateNvsButtons();
     }
@@ -550,21 +552,21 @@ class SerialCOBSTerminal {
     async writeNvsConfig() {
         const peripheralSelect = document.getElementById('peripheralConfig');
         const selectedValue = parseInt(peripheralSelect.value);
-        
+
         if (selectedValue === -1) {
             this.logError('Please select a valid peripheral configuration');
             return;
         }
-        
+
         try {
             const { PKTID_H2B_COMMON_SET_ATTRIBUTE } = cbConstants.common_packet_ids;
             const { BOARD_ATTR_TTCB_PERIPHERAL_CONFIG } = cbConstants.board_attribute_types;
-            
+
             this.codec.push_arguments(PKTID_H2B_COMMON_SET_ATTRIBUTE, [BOARD_ATTR_TTCB_PERIPHERAL_CONFIG, selectedValue]);
-            
+
             const configName = selectedValue === 0 ? '2 motors and 1 ultrasonic' : '3 motors';
             this.terminal_println(`${colorize.info('[NVS]')} Writing peripheral config: ${configName}`);
-            
+
         } catch (error) {
             this.logError('Failed to write NVS configuration: ' + error.message);
         }
@@ -575,7 +577,7 @@ class SerialCOBSTerminal {
             // Reset MCU in 100ms
             this.codec.push_arguments(0x23, [0x01, 0x64]);
             this.terminal_println(`${colorize.warning('[RESET]')} Device reset requested`);
-            
+
         } catch (error) {
             this.logError('Failed to reset device: ' + error.message);
         }
@@ -590,21 +592,21 @@ class SerialCOBSTerminal {
     async writeNvsConfig() {
         const peripheralSelect = document.getElementById('peripheralConfig');
         const selectedValue = parseInt(peripheralSelect.value);
-        
+
         if (selectedValue === -1) {
             this.logError('Please select a valid peripheral configuration');
             return;
         }
-        
+
         try {
             const { PKTID_H2B_COMMON_SET_ATTRIBUTE } = cbConstants.common_packet_ids;
             const { BOARD_ATTR_TTCB_PERIPHERAL_CONFIG } = cbConstants.board_attribute_types;
-            
+
             this.codec.push_arguments(PKTID_H2B_COMMON_SET_ATTRIBUTE, [BOARD_ATTR_TTCB_PERIPHERAL_CONFIG, selectedValue]);
-            
+
             const configName = selectedValue === 0 ? '2 motors and 1 ultrasonic' : '3 motors';
             this.terminal_println(`${colorize.info('[NVS]')} Writing peripheral config: ${configName}`);
-            
+
         } catch (error) {
             this.logError('Failed to write NVS configuration: ' + error.message);
         }
@@ -615,7 +617,7 @@ class SerialCOBSTerminal {
             // Reset MCU in 100ms
             this.codec.push_arguments(0x23, [0x01, 0x64]);
             this.terminal_println(`${colorize.warning('[RESET]')} Device reset requested`);
-            
+
         } catch (error) {
             this.logError('Failed to reset device: ' + error.message);
         }
@@ -955,10 +957,13 @@ class SerialCOBSTerminal {
                     this.peripheral_configs[2] = (infoValue >> 16) & 0xFF;
                     this.peripheral_configs[3] = (infoValue >> 24) & 0xFF;
                     console.log(`Peripheral configs: ${JSON.stringify(this.peripheral_configs)}`);
-                    
+
+                    // Store original value from device
+                    this.originalPeripheralConfig = this.peripheral_configs[0];
+
                     // Update peripheral config dropdown
                     const peripheralSelect = document.getElementById('peripheralConfig');
-                    
+
                     if (this.peripheral_configs[0] == this.CB1E_PERIPHERAL_CONFIG_EXT_2_MOTORS) {
                         console.log('2 motors and 1 ultrasonic configured.');
                         peripheralSelect.value = '0';
@@ -974,12 +979,33 @@ class SerialCOBSTerminal {
                         peripheralSelect.value = '-1';
                         this.terminal_println(`${colorize.warning('[NVS]')} Unknown peripheral config: ${this.peripheral_configs[0]}`);
                     }
+
+                    // Clear any UI effects since this is the original device value
+                    this.clearPeripheralConfigUIEffects();
                 }
                 else if (infoType == cbConstants.board_attribute_types.BOARD_ATTR_TTCB_BOOTING_COUNT) {
                     console.log(`Booting count: ${infoValue}`);
                 }
                 else {
                     // console.log(`Received attribute ${infoTypeName}: value ${infoValue}`);
+                }
+            }
+        }
+        else if (id == common_packet_ids.PKTID_B2H_COMMON_SET_ATTRIBUTE_RSP) {
+            const rsp = args[0];
+            const attributeType = args[1];
+            const attributeTypeName = this.boardAttributeTypeMap[attributeType.toString()] || 'UNKNOWN';
+            if (rsp != PKT_RSP_OK) {
+                this.terminal_println(`${colors.red('Error:')} Set Attribute request failed for ${attributeTypeName} with code ${rsp}`);
+            }
+            else {
+                this.terminal_println(`${colors.green('Success:')} Set Attribute request succeeded for ${attributeTypeName}`);
+                if (attributeType == cbConstants.board_attribute_types.BOARD_ATTR_TTCB_PERIPHERAL_CONFIG) {
+                    // Update original value and clear UI effects after successful write
+                    const peripheralSelect = document.getElementById('peripheralConfig');
+                    this.originalPeripheralConfig = parseInt(peripheralSelect.value);
+                    this.clearPeripheralConfigUIEffects();
+                    alert(`Attribute ${attributeTypeName} set successfully on device.`);
                 }
             }
         }
@@ -1008,7 +1034,7 @@ class SerialCOBSTerminal {
 
         const peripheralSelect = document.getElementById('peripheralConfig');
         const selectedValue = parseInt(peripheralSelect.value);
-        
+
         if (selectedValue === -1) {
             this.terminal_println(`${colorize.warning('[NVS]')} Please select a valid peripheral configuration`);
             alert('Please select a valid peripheral configuration before writing to NVS.');
@@ -1017,20 +1043,27 @@ class SerialCOBSTerminal {
 
         try {
             this.terminal_println(`${colorize.info('[NVS]')} Writing peripheral config: ${selectedValue}`);
-            
+
             // Prepare the attribute write packet
             const attributeId = cbConstants.board_attribute_types.BOARD_ATTR_TTCB_PERIPHERAL_CONFIG;
             const value = selectedValue;
 
             this.codec.push_arguments(cbConstants.common_packet_ids.PKTID_H2B_COMMON_SET_ATTRIBUTE, [attributeId, value]);
             this.terminal_println(`${colorize.success('[NVS]')} Configuration write command sent`);
-            
+
+            // Update original value and clear UI effects after successful write
+            this.originalPeripheralConfig = selectedValue;
+            this.clearPeripheralConfigUIEffects();
+
         } catch (error) {
             this.logError('Failed to write NVS config: ' + error.message);
         }
     }
 
     async resetDevice() {
+        const { common_packet_ids, board_action_types } = cbConstants;
+        const { BOARD_ACTION_TTCB_COMMON_RESTART } = board_action_types;
+        const { PKTID_H2B_COMMON_PERFORM_ACTION } = common_packet_ids;
         if (!this.writer) {
             this.logError('No serial connection');
             return;
@@ -1038,16 +1071,36 @@ class SerialCOBSTerminal {
 
         try {
             this.terminal_println(`${colorize.info('[NVS]')} Resetting device...`);
-            
-            // Send reset command (packet 0x23)
-            const encoded = this.cobsEncoder.encode([], 0x23, 10000);
-            await this.sendToSerial(new Uint8Array(encoded), true);
-            
+            this.codec.push_arguments(PKTID_H2B_COMMON_PERFORM_ACTION, [BOARD_ACTION_TTCB_COMMON_RESTART, 100, 0]);
             this.terminal_println(`${colorize.success('[NVS]')} Reset command sent`);
-            
         } catch (error) {
             this.logError('Failed to reset device: ' + error.message);
         }
+    }
+
+    onPeripheralConfigChange() {
+        const peripheralSelect = document.getElementById('peripheralConfig');
+        const selectedValue = parseInt(peripheralSelect.value);
+
+        if (this.originalPeripheralConfig !== null && selectedValue !== this.originalPeripheralConfig && selectedValue !== -1) {
+            this.showPeripheralConfigUIEffects();
+        } else {
+            this.clearPeripheralConfigUIEffects();
+        }
+    }
+
+    showPeripheralConfigUIEffects() {
+        const writeButton = document.getElementById('writeNvsConfig');
+
+        // Enable write button when configuration is modified
+        writeButton.disabled = false;
+    }
+
+    clearPeripheralConfigUIEffects() {
+        const writeButton = document.getElementById('writeNvsConfig');
+
+        // Disable write button when configuration matches original
+        writeButton.disabled = true;
     }
 
 }
